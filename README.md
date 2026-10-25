@@ -1,18 +1,59 @@
 # enduring_software
 
-A small Clojure project for **REPL-driven development** and **test-driven development (TDD)**.
+A small Clojure project for learning **REPL-driven development**, **test-driven development (TDD)**, and **incremental delivery with GitHub Issues and Projects**.
 
-The aim is to keep a JVM running while making small changes to source code, reloading affected namespaces, and checking behaviour through automated tests.
+The working principle is simple: specify one observable behaviour, prove it with tests, change the running application through the REPL, and deliver a small verified increment to protected `main`.
 
-## Prerequisites
+## Quick start
 
-- A JDK (this project has been developed with Java 21).
-- The [Clojure CLI](https://clojure.org/guides/install_clojure), providing the `clojure` command.
-- `make`.
-- `rlwrap`, used by the `repl` Makefile target for a nicer terminal REPL.
-- Git and the [GitHub CLI (`gh`)](https://cli.github.com/) for contributing changes. Authenticate once with `gh auth login`; verify with `gh auth status`.
+### Prerequisites
 
-The project uses Clojure **1.12.5**, `clojure.tools.namespace` for development-time code reloading, and `clojure.test` with the Cognitect test runner for tests.
+- Java 21 (the project's development and CI JDK)
+- [Clojure CLI](https://clojure.org/guides/install_clojure)
+- `make` and `rlwrap` (for the terminal REPL)
+- Git and [GitHub CLI (`gh`)](https://cli.github.com/)
+
+Authenticate the GitHub CLI once:
+
+```sh
+gh auth login
+gh auth status
+```
+
+To use the GitHub Projects commands, your GitHub CLI authentication also needs the `project` scope:
+
+```sh
+gh auth refresh -s project
+```
+
+### Everyday commands
+
+| Command | Purpose |
+| --- | --- |
+| `make repl` | Start a persistent REPL using the `:dev` alias |
+| `(go)` | Stop the running system, reload changed namespaces, and restart it |
+| `(start)` | Start the Component system if it is not running |
+| `(stop)` | Stop the Component system |
+| `(check)` | Reload changed namespaces and run the three test namespaces |
+| `make run` | Run the Jetty HTTP server in a fresh JVM |
+| `make test` | Run all tests in a fresh JVM (also used by CI) |
+
+Start the development REPL:
+
+```sh
+make repl
+```
+
+Then, at the `user=>` prompt:
+
+```clojure
+(go)
+(slurp "http://127.0.0.1:3000/hello")
+(slurp "http://127.0.0.1:3000/health")
+(check)
+```
+
+The responses from the two requests are `"Welcome to Clojure, World!"` and `"OK"` respectively. To end a REPL session cleanly, run `(stop)` and then exit the REPL.
 
 ## Project structure
 
@@ -20,314 +61,389 @@ The project uses Clojure **1.12.5**, `clojure.tools.namespace` for development-t
 enduring_software/
 ├── .github/
 │   └── workflows/
-│       └── ci.yml           # GitHub Actions: tests on PRs and pushes to main
+│       └── ci.yml             # GitHub Actions CI
 ├── dev/
-│   └── user.clj             # Development REPL helpers: go and check
+│   └── user.clj               # REPL system lifecycle and test helpers
 ├── src/
 │   └── foo/
-│       ├── core.clj         # Application entry point
-│       └── greeting.clj     # Greeting behaviour
+│       ├── core.clj           # Standalone entry point
+│       ├── greeting.clj       # Pure greeting behaviour
+│       ├── http.clj           # Ring handlers and Reitit routes
+│       ├── server.clj         # Component-managed Jetty server
+│       └── system.clj         # Component system definition
 ├── test/
 │   └── foo/
-│       └── greeting_test.clj # Behaviour tests
-├── deps.edn                 # Dependencies and :dev / :test aliases
-├── Makefile                 # Common commands
+│       ├── greeting_test.clj  # Pure behaviour tests
+│       ├── http_test.clj      # Fast Ring/Reitit handler tests
+│       └── system_test.clj    # Real HTTP + Component lifecycle test
+├── .gitignore
+├── deps.edn
+├── Makefile
 └── README.md
 ```
 
-`src` is application code; `dev` is development-only code; `test` contains automated tests. The `:dev` alias adds both `dev` and `test` to the classpath. The `:test` alias makes the tests available to the test runner.
+Application behaviour belongs in `src`, REPL helpers in `dev`, and automated tests in `test`. The `:dev` alias includes `dev` and `test` on the classpath; `:test` supplies the test runner and its test dependencies. The application uses Clojure 1.12.5, Ring/Jetty, Reitit and Stuart Sierra's Component.
 
-## Commands
+The local `.clj-kondo/.cache/` directory contains generated analysis data and is ignored by Git.
 
-Run these from the project root:
+## How the HTTP application is assembled
 
-| Command | What it does |
-| --- | --- |
-| `make repl` | Starts a persistent development REPL (`clojure -M:dev`, via `rlwrap`). |
-| `make run` | Starts a fresh JVM and runs `foo.core/-main`. |
-| `make test` | Runs the test suite in a fresh process using `clojure -X:test`. |
+The request path is:
 
-### Start a REPL
+```text
+Client
+  → Jetty HTTP server (foo.server)
+  → Ring / Reitit router (foo.http)
+  → Application behaviour (foo.greeting)
+```
+
+Available endpoints:
+
+| Method | Path | Response |
+| --- | --- | --- |
+| `GET` | `/hello` | `200`, plain-text `Welcome to Clojure, World!` |
+| `GET` | `/health` | `200`, plain-text `OK` |
+
+`/health` is a **liveness** endpoint: it establishes that the HTTP application responds. It does not assert that external dependencies are healthy.
+
+`foo.http/app` is a Ring handler—a function of a request map returning a response map. It can be tested without opening a network port. Jetty is a separate, stateful adapter managed by Component.
+
+`foo.system/new-system` builds a Component system map. The `:jetty` component implements `component/Lifecycle` to start and stop the Jetty server. The standalone `foo.core/-main` starts that system and waits on Jetty.
+
+### REPL-driven development
+
+The helpers in [`dev/user.clj`](dev/user.clj) give you:
+
+```clojure
+(go)       ; stop → refresh changed namespaces → start
+(start)    ; start the Component system
+(stop)     ; stop the Component system
+(check)    ; refresh changed namespaces → run tests
+(keys @system)
+(-> @system :jetty :server .isStarted)
+```
+
+`clojure.tools.namespace` reloads changed source and dependent namespaces when `(go)` or `(check)` is invoked; it is **not** continuously watching files.
+
+Component owns resource lifecycle. A `defonce` atom in `dev/user.clj` holds the current running system across namespace refreshes. The REPL stays alive while `(go)` stops and starts Jetty.
+
+**Important:** `(check)` can reload HTTP namespaces while the existing Jetty instance continues holding its earlier Ring handler. After changing a handler, call `(go)` before checking the live endpoint over HTTP.
+
+After changing `deps.edn`, restart the REPL so the new dependencies appear on its classpath.
+
+Example from another terminal:
 
 ```sh
-make repl
+curl -i http://127.0.0.1:3000/health
 ```
 
-At the `user=>` prompt:
+Expected response includes `200`, `Content-Type: text/plain; charset=utf-8`, and body `OK`.
 
-```clojure
-(go)     ; Reload changed code and run foo.core/-main
-(check)  ; Reload changed source/tests and run the greeting tests
-```
+An SLF4J warning about a missing provider is currently nonfatal; the application has not yet configured a logging backend.
 
-**Keep the REPL running** while editing files. Save your changes and call `(go)` or `(check)` again; you do not need to restart the JVM for ordinary source changes.
+## Testing and TDD
 
-## REPL development loop
+Use **Red → Green → Refactor** for one small behaviour at a time:
 
-1. Start the REPL with `make repl`.
-2. Edit and save a source file, for example `src/foo/greeting.clj`.
-3. Run `(go)` to execute the application, or `(check)` to run tests.
-4. Inspect the result and repeat.
+1. **Red:** Add a test that describes the required observable behaviour. Run `(check)` and verify it fails for the expected reason.
+2. **Green:** Make the smallest useful code change that satisfies the test. Run `(check)` again.
+3. **Refactor:** Improve structure only where there is a real benefit, preserving green tests.
 
-For example:
+For example, [Issue #4](https://github.com/rorycawley/enduring_software/issues/4) specified that `GET /health` returns `200`, the expected content type, and body `OK`. The corresponding Ring handler test exercises the request and response maps without Jetty.
 
-```clojure
-user=> (go)
-:reloading (foo.greeting foo.core)
-Welcome to Clojure, World!
-nil
-```
+The current test suite covers:
 
-The exact `:reloading` list depends on which files have changed. `clojure.tools.namespace` detects changes **when you call** `(go)` or `(check)`; it is not continuously reloading files in the background.
-
-### Why multiple namespaces reload
-
-`foo.core` depends on `foo.greeting`:
-
-```text
-foo.core
-    └── depends on foo.greeting
-```
-
-If `foo.greeting` changes, `clojure.tools.namespace` can reload `foo.greeting` **and** its dependent `foo.core`, in dependency order. The `dev/user.clj` helpers keep this convenient:
-
-```clojure
-(ns user
-  (:require [clojure.tools.namespace.repl :as tn]
-            [clojure.test :as t]))
-
-(tn/set-refresh-dirs "src" "test")
-
-(defn run-tests []
-  (t/run-tests 'foo.greeting-test))
-
-(defn check []
-  (tn/refresh :after 'user/run-tests))
-
-(defn go []
-  (tn/refresh :after 'foo.core/-main))
-```
-
-The `user` namespace lives in `dev`, outside the directories refreshed by `tools.namespace`, so these REPL helper functions remain available. The `:after` option runs the designated function after a successful refresh.
-
-## TDD: Red → Green → Refactor
-
-Use automated tests to drive one small behaviour change at a time.
-
-**1. Red — describe a behaviour with a failing test.**
-
-For example, in `test/foo/greeting_test.clj`:
-
-```clojure
-(deftest greet-whitespace-name-test
-  (is (= "Welcome to Clojure, friend!"
-         (greeting/greet "   "))))
-```
-
-Run `(check)`. Confirm the test fails **for the expected reason**, rather than because of a syntax or setup error.
-
-**2. Green — make the smallest useful change that passes the test.**
-
-In `src/foo/greeting.clj`:
-
-```clojure
-(ns foo.greeting
-  (:require [clojure.string :as str]))
-
-(defn greet [name]
-  (str "Welcome to Clojure, "
-       (if (str/blank? name) "friend" name)
-       "!"))
-```
-
-Run `(check)` again. A passing run reports zero failures and errors, for example:
-
-```text
-Ran 3 tests containing 3 assertions.
-0 failures, 0 errors.
-{:test 3, :pass 3, :fail 0, :error 0, :type :summary}
-```
-
-**3. Refactor — improve the structure, keeping behaviour unchanged.**
-
-Simplify code only when there is a concrete improvement to make. Keep the tests green. If the implementation is already clear, no refactoring is needed.
-
-Then repeat the cycle for the next behaviour.
-
-### Behaviour covered by the example tests
-
-| Input to `greet` | Expected result |
+| Test namespace | What it verifies |
 | --- | --- |
-| `"World"` | `"Welcome to Clojure, World!"` |
-| `""` | `"Welcome to Clojure, friend!"` |
-| `"   "` | `"Welcome to Clojure, friend!"` |
+| `foo.greeting-test` | Pure greeting behaviour, including empty/blank names |
+| `foo.http-test` | Ring/Reitit HTTP responses and unknown-route handling |
+| `foo.system-test` | Component-managed Jetty starts, serves real HTTP requests and stops |
 
-`clojure.string/blank?` also treats `nil` as blank. That is a consequence of the chosen implementation, **not yet a separately agreed requirement**.
+The real HTTP integration test uses port `0` so the operating system selects an available port. This avoids conflicting with the development server on port 3000.
 
-## Git workflow: trunk-based development with `gh`
+As of completing Issue #4, the suite has **7 tests and 14 assertions**. Run it in a fresh JVM before committing:
 
-We use **trunk-based development**. `main` is the protected trunk: integrate **small, tested changes frequently** via short-lived branches and pull requests. Avoid long-lived `develop` or feature branches. Each merged increment should leave `main` working.
-
-The GitHub ruleset [Protect main](https://github.com/rorycawley/enduring_software/rules/25802970) is active and requires:
-
-- A pull request before changes enter `main` (zero approving reviews required for this solo project).
-- The GitHub Actions **Test** status check to pass.
-- The branch to be up to date with `main` before merging.
-- No force-pushes, no deletion of `main`, and no bypass exceptions.
-
-**Direct pushes to `main` are not our workflow.** Use a short-lived branch and a pull request, even for documentation changes.
-
-### Everyday workflow (copy/paste reference)
-
-```text
-Update main → create short-lived branch
-                       ↓
-      Red → Green → Refactor in the REPL
-                       ↓
-             (check) → make test
-                       ↓
-              Review and commit
-                       ↓
-               Push the branch
-                       ↓
-                gh pr create
-                       ↓
-             gh pr checks --watch
-                       ↓
-          gh pr merge --squash --delete-branch
-                       ↓
-              Update local main
+```sh
+make test
 ```
 
-#### 1. Start with the latest `main`
+These tests verify behaviour at different boundaries. A passing suite is useful evidence, not a guarantee that every possible defect has been prevented.
 
-From the repository root, with your local changes committed or safely set aside:
+## Managing development with GitHub Projects and Issues
+
+We use:
+
+- **[Enduring Software — Project #5](https://github.com/users/rorycawley/projects/5)** for visibility and status: `Todo → In Progress → Done`.
+- **GitHub Issues** to capture the desired outcome, acceptance criteria and verification needed.
+- **Short-lived branches and pull requests** to deliver one small, independently testable increment.
+- **GitHub Actions CI** to verify tests before merging.
+- **Protected `main`** as the single trunk.
+
+The Project is linked to `rorycawley/enduring_software`. Its configured automation moves an item to **Done** when the corresponding Issue closes; this was verified with Issue #4.
+
+The one-time repository link was established with:
+
+```sh
+gh project link 5 --owner rorycawley --repo rorycawley/enduring_software
+```
+
+You do not need to repeat this command for every Issue.
+
+### 1. Capture one piece of work
+
+Start with a GitHub Issue whose description focuses on *what must be true*, not on internal implementation choices. A useful template is:
+
+```markdown
+## Outcome
+
+What should someone be able to do, or what problem should be solved?
+
+## Acceptance criteria
+
+- Given ..., when ..., then ...
+- ...
+
+## Verification
+
+- Fast behaviour/handler test
+- Integration test where relevant
+- All tests pass locally and in CI
+```
+
+Create an Issue and add it to the Project:
+
+```sh
+gh issue create \
+  --title "Describe the desired behaviour" \
+  --project "Enduring Software"
+```
+
+GitHub CLI will prompt for the body. A linked Project item should initially be `Todo`.
+
+View the backlog:
+
+```sh
+gh project item-list 5 --owner rorycawley
+gh issue list
+```
+
+### 2. Move the Issue to In Progress
+
+For a selected issue, first inspect its item ID and the Project's Status field:
+
+```sh
+gh project item-list 5 --owner rorycawley --format json
+gh project field-list 5 --owner rorycawley --format json
+```
+
+The IDs belong to the Project item and field, **not** the repository Issue number; they are different kinds of identifiers.
+
+You can retrieve the IDs and change the status from the CLI. Replace `4` with your actual Issue number:
+
+```sh
+ISSUE=4
+OWNER=rorycawley
+PROJECT=5
+
+PROJECT_ID=$(gh project view "$PROJECT" --owner "$OWNER" \
+  --format json --jq '.id')
+
+ITEM_ID=$(gh project item-list "$PROJECT" --owner "$OWNER" \
+  --format json \
+  --jq ".items[] | select(.content.number == $ISSUE and .content.repository == \"rorycawley/enduring_software\") | .id")
+
+FIELD_ID=$(gh project field-list "$PROJECT" --owner "$OWNER" \
+  --format json --jq '.fields[] | select(.name == "Status") | .id')
+
+OPTION_ID=$(gh project field-list "$PROJECT" --owner "$OWNER" \
+  --format json \
+  --jq '.fields[] | select(.name == "Status") | .options[] | select(.name == "In Progress") | .id')
+
+gh project item-edit \
+  --project-id "$PROJECT_ID" \
+  --id "$ITEM_ID" \
+  --field-id "$FIELD_ID" \
+  --single-select-option-id "$OPTION_ID"
+```
+
+Confirm the Issue is now in progress:
+
+```sh
+gh project item-list 5 --owner rorycawley --format json \
+  --jq '.items[] | select(.content.number == 4) | {title, status}'
+```
+
+If a command returns a blank ID, inspect the Project JSON and correct the selection **before** calling `item-edit`.
+
+### 3. Create a short-lived branch from `main`
+
+With a clean working tree:
 
 ```sh
 git switch main
 git pull --ff-only
-git switch -c feat/describe-small-change
+git switch -c feat/ISSUE-NUMBER-short-description
 ```
 
-Use a short, descriptive branch name: `feat/…`, `fix/…`, `docs/…`, or `ci/…`. Aim to merge within a day when practical. A pull request is an integration checkpoint, not a place to accumulate a large feature.
+For our first Issue-driven increment, we used `feat/4-health-endpoint`.
 
-#### 2. Develop one behaviour at a time
+Try to work on one Issue at a time. Split large work into safe, independently testable increments rather than keeping a branch open for days.
 
-In one terminal, keep the REPL open:
+### 4. Develop and verify with the REPL
+
+Start the REPL in one terminal:
 
 ```sh
 make repl
 ```
 
-In the REPL, follow **Red → Green → Refactor**. Run `(check)` after edits and `(go)` when you want to exercise the application:
+Work through Red → Green → Refactor, calling `(check)` frequently. Use `(go)` to restart the Component-managed HTTP server after source changes.
 
-```clojure
-(check)  ; Reload changed namespaces and run tests
-(go)     ; Reload changed namespaces and run the application
-```
-
-A failing test during the Red step is expected **locally**. Before integration, make all tests pass and keep code and tests together in the change.
-
-#### 3. Verify and commit the small increment
-
-In another terminal:
+In a separate terminal, verify the final increment:
 
 ```sh
 make test
 git diff --check
-git status
+git status --short
 git diff
 ```
 
-Inspect what changed, stage only relevant files, then commit:
+Stage only intended files. For example:
 
 ```sh
-git add src/foo/greeting.clj test/foo/greeting_test.clj
-git commit -m "Handle whitespace-only greeting names"
+git add src/foo/http.clj test/foo/http_test.clj test/foo/system_test.clj
+git commit -m "feat: add HTTP health endpoint"
 ```
 
-Use the actual files and message for your change. For selective staging, use `git add -p`. Avoid committing local caches, generated files or credentials.
+Use `git add -p` when you need more selective staging. Never include generated caches or credentials.
 
-#### 4. Push and open a pull request with `gh`
+### 5. Push and create a PR linked to the Issue
+
+Push your short-lived branch (substitute your own branch name):
 
 ```sh
-git push -u origin feat/describe-small-change
+git push -u origin feat/ISSUE-NUMBER-short-description
+```
 
+Create the PR with a closing keyword in the description:
+
+```sh
 gh pr create \
   --base main \
-  --title "Describe the small change" \
-  --body "Explain the behaviour changed and how it was verified."
+  --title "feat: describe delivered behaviour" \
+  --body "Closes #ISSUE_NUMBER"
 ```
 
-`gh pr create` uses the checked-out branch as the PR's head. To inspect it in the browser, use `gh pr view --web`.
+Replace `ISSUE_NUMBER` with the actual number, for example `Closes #4`. This links the PR to the Issue so merging into `main` automatically closes it.
 
-#### 5. Wait for CI and investigate failures
+You can inspect the PR using:
+
+```sh
+gh pr view --web
+```
+
+### 6. Let GitHub Actions verify the change
 
 ```sh
 gh pr checks --watch
 ```
 
-GitHub Actions runs `make test` in a fresh Ubuntu environment. Only merge when the **CI / Test** check succeeds. If it fails, fix the issue on the same branch, rerun local tests, commit and push again, then recheck. If GitHub says the branch is out of date, update it from `main` and rerun the checks.
+The workflow in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) executes `make test` using Java 21 and the Clojure CLI on pull requests targeting `main` and on pushes to `main`.
 
-#### 6. Squash merge and delete the completed branch
+The required check is named **`Test`** (shown in the CLI as `CI/Test (pull_request)`). If `gh pr checks --watch` initially reports no checks, the workflow may not yet have started; check the PR's Actions tab or run the command again.
+
+If tests fail, correct the problem on the same branch, rerun local tests, commit and push; do not bypass branch protection.
+
+### 7. Merge, close the Issue and finish the Project item
+
+Once the required check passes:
 
 ```sh
 gh pr merge --squash --delete-branch
-```
-
-The ruleset prevents merging without the required passing check. Squash merge leaves one clear commit for the increment on `main`; `--delete-branch` removes the completed branch from GitHub and, when possible, locally.
-
-#### 7. Return to an up-to-date trunk
-
-```sh
 git switch main
 git pull --ff-only
 git status
 ```
 
-`gh pr merge --delete-branch` may already switch you to `main`, but explicitly running these commands is safe. Start the next change from this updated trunk. To see recent runs on `main`:
+Because the PR body contains `Closes #ISSUE_NUMBER`, GitHub closes the Issue on merge. Project automation then changes the item's status to `Done`.
+
+Verify both:
 
 ```sh
-gh run list --branch main --limit 5
+gh issue view 4 --json state,title
+
+gh project item-list 5 --owner rorycawley --format json \
+  --jq '.items[] | select(.content.number == 4) | {title, status}'
 ```
 
-### Continuous Integration (CI)
+For completed Issue #4, the results were `CLOSED` and `Done`.
 
-The workflow [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs for:
+The outcome is a traceable history:
 
-- Pull requests targeting `main`.
-- Pushes to `main` (including merges).
+```text
+Outcome + acceptance criteria (Issue)
+              ↓
+     TDD + implementation
+              ↓
+   Tests + reviewed change (PR)
+              ↓
+    Verified checks (GitHub CI)
+              ↓
+     Protected main (merge)
+              ↓
+      Closed Issue + Done
+```
 
-The **CI / Test** job checks out the code, installs Java 21 and the Clojure CLI, then runs the same command as local verification:
+### GitHub workflow — quick reference
 
 ```sh
+# Select work in Project #5; move its Issue to In Progress
+git switch main
+git pull --ff-only
+git switch -c feat/ISSUE-NUMBER-short-description
+
+# Work in the REPL: (check), (go)
 make test
+git diff --check
+
+git add -p  # Stage the intended changes; add new files explicitly
+git commit -m "feat: describe the change"
+git push -u origin feat/ISSUE-NUMBER-short-description
+
+gh pr create --base main \
+  --title "feat: describe the change" \
+  --body "Closes #ISSUE_NUMBER"
+
+gh pr checks --watch
+gh pr merge --squash --delete-branch
+
+git switch main
+git pull --ff-only
+git status
+# Verify the Issue closed and the Project item moved to Done
 ```
 
-The branch ruleset requires its **`Test`** status check before merging. The job name is `Test`; `CI` is the workflow name. You can review runs in the [Actions tab](https://github.com/rorycawley/enduring_software/actions) or with `gh run list`.
+## Protecting the trunk
 
-A green CI check means the automated tests passed for that commit; it does **not** prove all possible behaviour is correct. If a push-triggered CI run on `main` fails, treat restoring a green trunk as a priority.
+The repository's active [Protect main ruleset](https://github.com/rorycawley/enduring_software/rules/25802970) requires a PR and a successful **Test** check. The branch must be current with `main`; force-pushes and deletion are blocked, and there are no bypass exceptions.
 
-### Working agreements
+**Do not push directly to `main`.** This applies equally to source changes, tests, documentation and CI configuration.
 
-- **Keep `main` releasable.** No deliberately failing tests or broken features on trunk.
-- **Integrate frequently.** Prefer small, independently verifiable increments; split large features into safe slices.
-- **Hide incomplete functionality** behind feature flags or other safe boundaries if necessary.
-- **Commit implementation and tests together.** Red is a local TDD phase, not a state to merge.
-- **Use PRs and CI for every change.** The same rules apply to code, tests, documentation and configuration.
-- **Review changes before committing.** Keep secrets and machine-local files out of Git; maintain `.gitignore`.
+The working agreements are:
 
-## When to use each command
+- Keep `main` working and releasable.
+- Use small changes and integrate frequently.
+- Describe acceptance criteria before implementation; link every meaningful change to an Issue when practical.
+- Run fast REPL tests as you work and `make test` before creating the PR.
+- Commit behaviour and its tests together.
+- Let CI confirm the result before merging.
+- Use the Project board for visibility, not as a substitute for the Issue, tests or PR.
+- Keep the status workflow small: Todo, In Progress, Done.
 
-- **During development:** keep `make repl` open and use `(check)` frequently, with `(go)` when you want to exercise the application.
-- **Before committing:** run `make test` to verify the suite in a clean process.
-- **To run the application independently:** use `make run`.
-- **After changing `deps.edn`:** restart the REPL so its classpath reflects the new dependencies.
+## Reference: first completed Issue-driven change
 
-## A few conventions
+- [Issue #4 — Add GET /health liveness endpoint](https://github.com/rorycawley/enduring_software/issues/4)
+- [PR #5 — HTTP health endpoint](https://github.com/rorycawley/enduring_software/pull/5)
+- [Enduring Software Project #5](https://github.com/users/rorycawley/projects/5)
 
-- Keep application behaviour in `src`, not in `dev/user.clj`.
-- Use `dev/user.clj` for short development conveniences, such as `(go)` and `(check)`.
-- Place tests under `test` with a matching namespace: `foo.greeting` → `foo.greeting-test` in `test/foo/greeting_test.clj`.
-- Test **observable behaviour**, not implementation details, so internal refactoring doesn't invalidate otherwise-correct tests.
-- Remember that a long-running REPL retains state. Reloading definitions is not the same as restarting the JVM; use a fresh process when you need a clean-slate check.
+This work followed the complete cycle and verified the Project's automatic transition to `Done`.
