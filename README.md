@@ -10,6 +10,7 @@ The aim is to keep a JVM running while making small changes to source code, relo
 - The [Clojure CLI](https://clojure.org/guides/install_clojure), providing the `clojure` command.
 - `make`.
 - `rlwrap`, used by the `repl` Makefile target for a nicer terminal REPL.
+- Git and the [GitHub CLI (`gh`)](https://cli.github.com/) for contributing changes. Authenticate once with `gh auth login`; verify with `gh auth status`.
 
 The project uses Clojure **1.12.5**, `clojure.tools.namespace` for development-time code reloading, and `clojure.test` with the Cognitect test runner for tests.
 
@@ -17,6 +18,9 @@ The project uses Clojure **1.12.5**, `clojure.tools.namespace` for development-t
 
 ```text
 enduring_software/
+├── .github/
+│   └── workflows/
+│       └── ci.yml           # GitHub Actions: tests on PRs and pushes to main
 ├── dev/
 │   └── user.clj             # Development REPL helpers: go and check
 ├── src/
@@ -160,120 +164,158 @@ Then repeat the cycle for the next behaviour.
 
 `clojure.string/blank?` also treats `nil` as blank. That is a consequence of the chosen implementation, **not yet a separately agreed requirement**.
 
-## Git workflow: trunk-based development
+## Git workflow: trunk-based development with `gh`
 
-This project uses **trunk-based development**: `main` is the trunk and the single integration branch. Keep it green, work in small increments, and integrate changes frequently. Avoid long-lived `develop`, feature, or release branches.
+We use **trunk-based development**. `main` is the protected trunk: integrate **small, tested changes frequently** via short-lived branches and pull requests. Avoid long-lived `develop` or feature branches. Each merged increment should leave `main` working.
 
-The everyday loop connects our TDD and REPL workflow to Git:
+The GitHub ruleset [Protect main](https://github.com/rorycawley/enduring_software/rules/25802970) is active and requires:
+
+- A pull request before changes enter `main` (zero approving reviews required for this solo project).
+- The GitHub Actions **Test** status check to pass.
+- The branch to be up to date with `main` before merging.
+- No force-pushes, no deletion of `main`, and no bypass exceptions.
+
+**Direct pushes to `main` are not our workflow.** Use a short-lived branch and a pull request, even for documentation changes.
+
+### Everyday workflow (copy/paste reference)
 
 ```text
-Choose one small behaviour
-        ↓
-Red → Green → Refactor in the REPL: (check)
-        ↓
-Review the diff and run: make test
-        ↓
-Commit the working increment
-        ↓
-Integrate into main promptly
+Update main → create short-lived branch
+                       ↓
+      Red → Green → Refactor in the REPL
+                       ↓
+             (check) → make test
+                       ↓
+              Review and commit
+                       ↓
+               Push the branch
+                       ↓
+                gh pr create
+                       ↓
+             gh pr checks --watch
+                       ↓
+          gh pr merge --squash --delete-branch
+                       ↓
+              Update local main
 ```
 
-### Option A — Short-lived branch and pull request (recommended when using a remote)
+#### 1. Start with the latest `main`
 
-A short-lived branch is compatible with trunk-based development **when it is merged back quickly** (ideally the same day, usually within a day or two). A pull request is a review and integration mechanism, not a place to accumulate days of work.
-
-**1. Start from the latest trunk** (the pull command assumes a configured remote/tracking branch):
+From the repository root, with your local changes committed or safely set aside:
 
 ```sh
 git switch main
 git pull --ff-only
-git switch -c feat/whitespace-greeting
+git switch -c feat/describe-small-change
 ```
 
-**2. Develop one small behaviour.** Keep `make repl` running in a separate terminal. Work in Red → Green → Refactor cycles, calling `(check)` frequently. When the increment is green:
+Use a short, descriptive branch name: `feat/…`, `fix/…`, `docs/…`, or `ci/…`. Aim to merge within a day when practical. A pull request is an integration checkpoint, not a place to accumulate a large feature.
+
+#### 2. Develop one behaviour at a time
+
+In one terminal, keep the REPL open:
+
+```sh
+make repl
+```
+
+In the REPL, follow **Red → Green → Refactor**. Run `(check)` after edits and `(go)` when you want to exercise the application:
+
+```clojure
+(check)  ; Reload changed namespaces and run tests
+(go)     ; Reload changed namespaces and run the application
+```
+
+A failing test during the Red step is expected **locally**. Before integration, make all tests pass and keep code and tests together in the change.
+
+#### 3. Verify and commit the small increment
+
+In another terminal:
 
 ```sh
 make test
+git diff --check
 git status
 git diff
 ```
 
-**3. Commit only the intended files.** Prefer focused commits with meaningful messages:
+Inspect what changed, stage only relevant files, then commit:
 
 ```sh
 git add src/foo/greeting.clj test/foo/greeting_test.clj
 git commit -m "Handle whitespace-only greeting names"
 ```
 
-For several unrelated edits, use `git add -p` to stage selectively. Aim for small, self-contained, passing commits rather than large batches of changes.
+Use the actual files and message for your change. For selective staging, use `git add -p`. Avoid committing local caches, generated files or credentials.
 
-**4. Integrate promptly.** With a remote such as GitHub:
+#### 4. Push and open a pull request with `gh`
 
 ```sh
-git push -u origin feat/whitespace-greeting
+git push -u origin feat/describe-small-change
+
+gh pr create \
+  --base main \
+  --title "Describe the small change" \
+  --body "Explain the behaviour changed and how it was verified."
 ```
 
-Open a small pull request into `main`. Have automated checks run `make test` before merging. Review it and merge as soon as it's ready. Once merged, update your local trunk:
+`gh pr create` uses the checked-out branch as the PR's head. To inspect it in the browser, use `gh pr view --web`.
+
+#### 5. Wait for CI and investigate failures
+
+```sh
+gh pr checks --watch
+```
+
+GitHub Actions runs `make test` in a fresh Ubuntu environment. Only merge when the **CI / Test** check succeeds. If it fails, fix the issue on the same branch, rerun local tests, commit and push again, then recheck. If GitHub says the branch is out of date, update it from `main` and rerun the checks.
+
+#### 6. Squash merge and delete the completed branch
+
+```sh
+gh pr merge --squash --delete-branch
+```
+
+The ruleset prevents merging without the required passing check. Squash merge leaves one clear commit for the increment on `main`; `--delete-branch` removes the completed branch from GitHub and, when possible, locally.
+
+#### 7. Return to an up-to-date trunk
 
 ```sh
 git switch main
 git pull --ff-only
+git status
 ```
 
-Delete the completed branch after confirming it has been merged. Note that squash-merging creates a new commit, so `git branch -d` may not recognise the old branch as merged; check the PR's status before forcing deletion.
-
-### Option B — Working directly on `main` (simple solo-project workflow)
-
-For a solo project, you can skip feature branches and commit directly on `main`, provided **every commit leaves the trunk working**:
+`gh pr merge --delete-branch` may already switch you to `main`, but explicitly running these commands is safe. Start the next change from this updated trunk. To see recent runs on `main`:
 
 ```sh
-# After a Red → Green → Refactor cycle
-make test
-git diff
-git add src/foo/greeting.clj test/foo/greeting_test.clj
-git commit -m "Handle whitespace-only greeting names"
-# If you have a remote:
-git push origin main
+gh run list --branch main --limit 5
 ```
-
-If collaborators join, favour short-lived branches, pull requests, and required automated checks to protect the shared trunk.
-
-### Working agreements
-
-- **`main` stays green and releasable.** Run `(check)` as you work and `make test` before integration. A successful local run is useful; CI should independently verify each proposed change.
-- **Integrate small and often.** Split substantial work into independently useful increments. Don't keep a feature branch open while building a large feature.
-- **Hide unfinished functionality.** Use a feature flag or another safe boundary if incomplete code must be integrated; do not leave broken behaviour exposed on `main`.
-- **Commit code and tests together.** A red test is a deliberate *local* TDD step, not a reason to leave the shared trunk failing.
-- **Review diffs before committing.** Don't commit REPL caches, compiled artifacts, credentials, or machine-local files. Maintain a suitable `.gitignore`.
-- **Prefer a linear, understandable history.** Keep branches up to date with `main`; avoid force-pushing the shared trunk. Rebase only your own unpublished or safely coordinated branch work.
 
 ### Continuous Integration (CI)
 
-GitHub Actions automatically runs the Clojure test suite whenever:
+The workflow [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs for:
 
-- A pull request targets `main`.
-- A commit is pushed to `main`.
+- Pull requests targeting `main`.
+- Pushes to `main` (including merges).
 
-The workflow is defined in `.github/workflows/ci.yml`. It runs on Ubuntu with Java 21 and the Clojure CLI, then executes the same verification command used locally:
+The **CI / Test** job checks out the code, installs Java 21 and the Clojure CLI, then runs the same command as local verification:
 
 ```sh
 make test
 ```
 
-#### Keeping the trunk green
+The branch ruleset requires its **`Test`** status check before merging. The job name is `Test`; `CI` is the workflow name. You can review runs in the [Actions tab](https://github.com/rorycawley/enduring_software/actions) or with `gh run list`.
 
-Our working agreement is that `main` must always be working. Before integrating changes:
+A green CI check means the automated tests passed for that commit; it does **not** prove all possible behaviour is correct. If a push-triggered CI run on `main` fails, treat restoring a green trunk as a priority.
 
-1. Complete a Red → Green → Refactor cycle.
-2. Run `(check)` from the REPL.
-3. Run `make test` in a fresh JVM.
-4. Commit and push the change on a short-lived branch.
-5. Verify the GitHub Actions **Test** job passes.
-6. Merge the pull request into `main` promptly.
+### Working agreements
 
-After merging the CI workflow, configure a GitHub branch ruleset that requires the **Test** status check before merging. The workflow itself does not enforce branch protection.
-
-A passing CI run demonstrates that the automated tests pass; it does not guarantee the application is free of defects.
+- **Keep `main` releasable.** No deliberately failing tests or broken features on trunk.
+- **Integrate frequently.** Prefer small, independently verifiable increments; split large features into safe slices.
+- **Hide incomplete functionality** behind feature flags or other safe boundaries if necessary.
+- **Commit implementation and tests together.** Red is a local TDD phase, not a state to merge.
+- **Use PRs and CI for every change.** The same rules apply to code, tests, documentation and configuration.
+- **Review changes before committing.** Keep secrets and machine-local files out of Git; maintain `.gitignore`.
 
 ## When to use each command
 
