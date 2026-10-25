@@ -28,7 +28,17 @@
 (defn run-tests []
   (t/run-tests 'foo.greeting-test
                'foo.http-test
-               'foo.system-test))
+               'foo.system-test
+               'foo.acceptance.health-test))
+
+(defn test-one [test-symbol]
+  (when (= :ok (tn/refresh))
+    (t/run-test-var
+     (requiring-resolve test-symbol))))
+
+(defn accept []
+  (when (= :ok (tn/refresh))
+    (t/run-tests 'foo.acceptance.health-test)))
 
 (defn check []
   (tn/refresh :after 'user/run-tests))
