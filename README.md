@@ -247,7 +247,33 @@ If collaborators join, favour short-lived branches, pull requests, and required 
 - **Review diffs before committing.** Don't commit REPL caches, compiled artifacts, credentials, or machine-local files. Maintain a suitable `.gitignore`.
 - **Prefer a linear, understandable history.** Keep branches up to date with `main`; avoid force-pushing the shared trunk. Rebase only your own unpublished or safely coordinated branch work.
 
-**Future CI enhancement:** When the repository is hosted on GitHub, add a GitHub Actions workflow that runs `make test` on pull requests and pushes to `main`, and protect `main` by requiring those checks. This is a recommendation, **not** something already configured by this README.
+### Continuous Integration (CI)
+
+GitHub Actions automatically runs the Clojure test suite whenever:
+
+- A pull request targets `main`.
+- A commit is pushed to `main`.
+
+The workflow is defined in `.github/workflows/ci.yml`. It runs on Ubuntu with Java 21 and the Clojure CLI, then executes the same verification command used locally:
+
+```sh
+make test
+```
+
+#### Keeping the trunk green
+
+Our working agreement is that `main` must always be working. Before integrating changes:
+
+1. Complete a Red → Green → Refactor cycle.
+2. Run `(check)` from the REPL.
+3. Run `make test` in a fresh JVM.
+4. Commit and push the change on a short-lived branch.
+5. Verify the GitHub Actions **Test** job passes.
+6. Merge the pull request into `main` promptly.
+
+After merging the CI workflow, configure a GitHub branch ruleset that requires the **Test** status check before merging. The workflow itself does not enforce branch protection.
+
+A passing CI run demonstrates that the automated tests pass; it does not guarantee the application is free of defects.
 
 ## When to use each command
 
