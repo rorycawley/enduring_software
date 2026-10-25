@@ -20,3 +20,14 @@
         response (http/app request)]
 
     (is (= 404 (:status response)))))
+
+(deftest health-endpoint-test
+  (let [request  (mock/request :get "/health")
+        response (http/app request)]
+
+    (is (= 200 (:status response)))
+
+    (is (= "text/plain; charset=utf-8"
+           (get-in response [:headers "content-type"])))
+
+    (is (= "OK" (:body response)))))

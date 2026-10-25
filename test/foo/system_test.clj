@@ -18,8 +18,12 @@
                (slurp
                 (str "http://127.0.0.1:"
                      port
-                     "/hello")))))
-
+                     "/hello"))))
+        (is (= "OK"
+               (slurp
+                (str "http://127.0.0.1:"
+                     port
+                     "/health")))))
       (finally
         (component/stop running)))
 
