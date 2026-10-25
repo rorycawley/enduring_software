@@ -7,10 +7,10 @@ Our goal is to make a small, verifiable change from an agreed user outcome to wo
 ## One workflow, two feedback loops
 
 ```text
-GitHub Issue: outcome + agreed, concrete examples
+GitHub Issue: outcome + business-facing criteria
                      │
                      ▼
-         ATDD: acceptance test RED
+      Agree examples → acceptance RED
                      │
                      ▼
         ┌─────────────────────────┐
@@ -38,43 +38,93 @@ GitHub Issue: outcome + agreed, concrete examples
 
 **ATDD is more than running an end-to-end test.** Its distinctive step is agreeing on specific examples *before* implementation, considering user, development and testing perspectives together. We can play these roles ourselves in this learning repository, but must still surface ambiguity before coding.
 
-**Acceptance criteria are not automatically acceptance tests.** First agree on the criteria and examples; then choose the smallest executable checks that prove them. Not every sentence needs its own test.
+**Acceptance criteria are not automatically acceptance tests.** Express the outcome and rules in language meaningful to the people using the system. Agree on examples that clarify those rules, then implement executable tests against the appropriate public interface. Not every sentence needs its own test, and we should not force HTTP or implementation details into a business requirement.
+
+### Separate the requirement from its delivery mechanism
+
+Keep these four things connected, but distinguish their roles:
+
+| Layer | What it answers | Example |
+| --- | --- | --- |
+| **Outcome** | Why does this behaviour matter? | Someone can request a greeting addressed to them. |
+| **Business-facing acceptance criterion** | What must remain true regardless of the implementation? | When no name is supplied, the greeting addresses World. |
+| **Concrete example** | Which particular situation establishes what the rule means? | No name supplied → `Welcome to Clojure, World!` |
+| **Executable acceptance test** | How do we verify that example through the system we actually deliver? | Send `GET /hello` and check the response. |
+
+**Write the first three in the language of the domain, not in the language of HTTP, Clojure or the database.** A rule should not cease to make sense because we replace Ring with another framework or replace the application entirely.
+
+A published HTTP API may *also* have requirements of its own: route names, status codes, content types and payload formats are important to existing API clients. Record these as **public interface contract requirements**, linked to the business examples, rather than disguising a query-string detail as a business concept.
+
+The test code is where the agreed example is mapped onto that interface. Keep a traceable connection from the Issue to its examples, the tests and the change that satisfies them.
 
 ## ATDD: discover and agree on the behaviour first
 
-### 1. Record the desired outcome
+### 1. Record the desired outcome and business-facing rules
 
 Write an Issue describing a meaningful change in observable behaviour, not a prescribed internal design. State who benefits, what they want to accomplish and what would count as success.
 
-Example for a *future* increment (not currently implemented):
+Example for [Issue #8 — personalised greetings](https://github.com/rorycawley/enduring_software/issues/8) (**under discussion; not yet implemented**):
 
-> A caller can request a personalised greeting instead of always receiving a greeting for `World`.
+> Someone can ask for a greeting addressed to a particular person.
+
+Possible agreed acceptance criteria, expressed without HTTP terminology:
+
+- When a name is supplied, the greeting addresses that name.
+- When **no name is supplied**, the greeting addresses World.
+- When an **explicitly empty name is supplied**, the greeting also addresses World.
+
+Do not write *"When `GET /hello?name=` is called"* as the business rule. That's one particular way the client expresses an empty name, not the behaviour we are trying to specify.
+
+Importantly, **no name supplied** and **an explicitly empty name supplied** are different situations, even though we have agreed that their outcomes match. Keeping both examples means a future implementation cannot accidentally support only one of them.
 
 ### 2. Discuss concrete examples (Three Amigos)
 
 Approach each example from three perspectives:
 
-- **User / stakeholder:** What should the caller experience? Does the outcome solve the problem?
+- **User / stakeholder:** What should the person experience? Does the outcome solve the problem?
 - **Developer:** What is unclear, difficult, or dependent on another behaviour?
 - **Tester:** Which contrasting or boundary cases might disprove our shared understanding?
 
-Write examples such as:
+Express acceptance scenarios in domain language first. For example, these are the three currently agreed cases for Issue #8:
 
 ```gherkin
-Scenario: Personalised greeting
-  Given the application is running
-  When a client requests GET /hello?name=Ada
-  Then the response status is 200
-  And the response body is "Welcome to Clojure, Ada!"
+Scenario: A name is provided
+  Given a greeting can be requested
+  When someone requests a greeting for "Ada"
+  Then the greeting is "Welcome to Clojure, Ada!"
+
+Scenario: No name is provided
+  Given a greeting can be requested
+  When someone requests a greeting without providing a name
+  Then the greeting is "Welcome to Clojure, World!"
+
+Scenario: An explicitly empty name is provided
+  Given a greeting can be requested
+  When someone requests a greeting with an empty name
+  Then the greeting is "Welcome to Clojure, World!"
 ```
 
-This example makes no commitment about Ring handlers, routes, functions or persistence. It describes the external contract that matters.
+These Given/When/Then statements are a **shared specification**, not a requirement to use a Gherkin parser or Cucumber. They do not mention handlers, routes or implementation details.
 
-Before writing tests for missing, blank, invalid or unusually long names, **agree on their expected behaviour**. Don't invent policies merely to fill in test cases. Also consider relevant error conditions and quality expectations.
+#### Map agreed examples onto the public HTTP contract
+
+Because our current product exposes greetings over HTTP, the executable acceptance tests will use these requests:
+
+| Business situation | HTTP example used in the test | Expected response body |
+| --- | --- | --- |
+| Name Ada supplied | `GET /hello?name=Ada` | `Welcome to Clojure, Ada!` |
+| No name supplied | `GET /hello` | `Welcome to Clojure, World!` |
+| Explicitly empty name supplied | `GET /hello?name=` | `Welcome to Clojure, World!` |
+
+Separately, our HTTP interface contract specifies the success response (`200` and `Content-Type: text/plain; charset=utf-8`). These details matter for an HTTP client, but they're **not the business definition of a greeting**.
+
+The mapping makes the requirement testable while keeping the business specification useful if the delivery mechanism changes. If we replace HTTP with another interface, we would retain the agreed outcomes and write a new adapter-level test mapping.
+
+**Do not silently decide unresolved cases.** For example, a name containing only whitespace might count as no name, might be rejected, or might have another agreed meaning. Record it as a question until the expected behaviour is decided. Do the same for other relevant missing, invalid or unusually long inputs rather than inventing policies to increase test counts.
 
 ### 3. Make the examples executable — ATDD RED
 
-Write an acceptance test at the **boundary that expresses the requirement**. For the current HTTP application, that is often real HTTP through Component-managed Jetty. For a future bounded context, the appropriate acceptance boundary might be its public contract, with separate real-adapter integration tests.
+Translate an **agreed example** into an acceptance test at the **public boundary that expresses the requirement**. The test code may mention URLs, status codes and response headers; the business-facing rule above should not have to. For the current HTTP application, that boundary is often real HTTP through Component-managed Jetty. For a future bounded context, it might be its public contract, supported by separate real-adapter integration tests.
 
 We can begin by adding a new acceptance `deftest` to the *existing* `test/foo/system_test.clj`, which is already included in `(check)`:
 
@@ -99,7 +149,7 @@ We can begin by adding a new acceptance `deftest` to the *existing* `test/foo/sy
         (component/stop running)))))
 ```
 
-This is an **illustration**, not a test already present in the repository. It should initially fail because the current `/hello` endpoint always returns `Welcome to Clojure, World!`.
+This is an **illustration**, not a test already present in the repository. It checks the **"Ada" business example** through its concrete HTTP mapping. It should initially fail because the current `/hello` endpoint always returns `Welcome to Clojure, World!`. Add equivalent acceptance checks for the other agreed cases as the increment progresses.
 
 Run `(check)` and confirm the *expected* failure. A typo, missing namespace or test setup exception is **not** the desired Red stage.
 
@@ -121,7 +171,7 @@ Once the acceptance example passes, check the other agreed examples and any exis
 
 Before declaring the Issue ready:
 
-- Confirm every **agreed acceptance example** is covered and passing.
+- Confirm every **agreed acceptance example** is covered and passing, and remains traceable to its business-facing criterion.
 - Run the entire suite in a fresh JVM using `make test`.
 - Review what the tests *do not* establish: public contracts, failures and assumptions should be explicit.
 - Verify with stakeholders where possible; a green automated test does not replace agreement on the outcome.
@@ -216,22 +266,36 @@ You do not need to repeat this command for every Issue.
 
 ### 1. Capture one piece of work
 
-Start with a GitHub Issue whose description focuses on *what must be true*, not on internal implementation choices. A useful template is:
+Start with a GitHub Issue whose description focuses on *what must be true*, not on internal implementation choices. Specify the **business rules first**, clarify them with examples, and record the technical public contract separately where needed:
 
 ```markdown
 ## Outcome
 
 What should someone be able to do, or what problem should be solved?
 
-## Acceptance criteria
+## Acceptance criteria (business language)
+
+- When [business situation], [required observable outcome].
+- ...
+
+## Agreed examples
 
 - Given ..., when ..., then ...
-- ...
+- Include contrasting and boundary examples where relevant.
+
+## Public interface contract (where relevant)
+
+- HTTP method/path, status, headers or message formats that clients rely on.
+- Link each technical example to its business scenario.
+
+## Open questions
+
+- Record unresolved cases rather than guessing.
 
 ## Verification
 
-- Fast behaviour/handler test
-- Integration test where relevant
+- Executable acceptance tests for agreed examples
+- Fast domain/handler tests and real-adapter integration tests as needed
 - All tests pass locally and in CI
 ```
 
@@ -322,7 +386,7 @@ Start the REPL in one terminal:
 make repl
 ```
 
-Agree on acceptance examples and make the first acceptance test fail for the expected reason. Then work through the TDD inner loop (Red → Green → Refactor), calling `(check)` frequently. Use `(go)` to restart the Component-managed HTTP server after source changes.
+Agree on business-facing criteria and concrete examples, map them to the published interface, and make the first acceptance test fail for the expected reason. Then work through the TDD inner loop (Red → Green → Refactor), calling `(check)` frequently. Use `(go)` to restart the Component-managed HTTP server after source changes.
 
 In a separate terminal, verify the final increment:
 
@@ -406,7 +470,7 @@ For completed Issue #4, the results were `CLOSED` and `Done`.
 The outcome is a traceable history:
 
 ```text
-Outcome + acceptance examples (Issue)
+Outcome + business criteria + examples (Issue)
               ↓
    ATDD (red) + TDD + ATDD (green)
               ↓
@@ -458,7 +522,7 @@ The working agreements are:
 
 - Keep `main` working and releasable.
 - Use small changes and integrate frequently.
-- Describe acceptance criteria before implementation; link every meaningful change to an Issue when practical.
+- Describe acceptance criteria in business language before implementation; keep concrete examples and interface-specific checks traceable to them. Link every meaningful change to an Issue when practical.
 - Run fast REPL tests as you work and `make test` before creating the PR.
 - Commit behaviour and its tests together.
 - Let CI confirm the result before merging.
