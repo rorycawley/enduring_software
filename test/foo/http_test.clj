@@ -31,3 +31,12 @@
            (get-in response [:headers "content-type"])))
 
     (is (= "OK" (:body response)))))
+
+(deftest hello-with-name-test
+  (let [request  (mock/request :get "/hello?name=Ada")
+        response (http/app request)]
+
+    (is (= 200 (:status response)))
+
+    (is (= "Welcome to Clojure, Ada!"
+           (:body response)))))

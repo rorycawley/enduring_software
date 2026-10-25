@@ -64,7 +64,7 @@ The test code is where the agreed example is mapped onto that interface. Keep a 
 
 Write an Issue describing a meaningful change in observable behaviour, not a prescribed internal design. State who benefits, what they want to accomplish and what would count as success.
 
-Example for [Issue #8 — personalised greetings](https://github.com/rorycawley/enduring_software/issues/8) (**under discussion; not yet implemented**):
+Example for [Issue #8 — personalised greetings](https://github.com/rorycawley/enduring_software/issues/8) (used here as a worked example):
 
 > Someone can ask for a greeting addressed to a particular person.
 
@@ -127,7 +127,7 @@ The mapping makes the requirement testable while keeping the business specificat
 
 Translate an **agreed example** into an acceptance test at the **public boundary that expresses the requirement**. The test code may mention URLs, status codes and response headers; the business-facing rule above should not have to. For the current HTTP application, that boundary is often real HTTP through Component-managed Jetty. For a future bounded context, it might be its public contract, supported by separate real-adapter integration tests.
 
-For the future personalised-greeting increment, add a separate namespace such as `test/foo/acceptance/greeting_test.clj` and register `foo.acceptance.greeting-test` in the `acceptance-test-namespaces` list in `dev/user.clj`. For example:
+For the personalised-greeting increment, use a dedicated file such as `test/foo/acceptance/greeting_test.clj` and register `foo.acceptance.greeting-test` in both `(accept)` and `(run-tests)` in `dev/user.clj`. The acceptance test starts a real Component-managed Jetty server, issues an HTTP request, and checks its response. For example:
 
 ```clojure
 (ns foo.acceptance.greeting-test
@@ -135,29 +135,33 @@ For the future personalised-greeting increment, add a separate namespace such as
             [com.stuartsierra.component :as component]
             [foo.system :as system]))
 
-(deftest personalised-greeting-acceptance-test
+(defn- http-get [path]
   (let [running (component/start
                  (system/new-system {:port 0}))]
     (try
       (let [jetty (get-in running [:jetty :server])
-            port (.getLocalPort
-                   (first (.getConnectors jetty)))
-            url (str "http://127.0.0.1:"
-                     port "/hello?name=Ada")
+            port (.getLocalPort (first (.getConnectors jetty)))
+            url (str "http://127.0.0.1:" port path)
             connection (.openConnection
-                         (.toURL (java.net.URI/create url)))]
-
-        (is (= 200 (.getResponseCode connection)))
-        (is (= "Welcome to Clojure, Ada!"
-               (slurp (.getInputStream connection)))))
-
+                        (.toURL (java.net.URI/create url)))]
+        {:status (.getResponseCode connection)
+         :content-type (.getContentType connection)
+         :body (slurp (.getInputStream connection))})
       (finally
         (component/stop running)))))
+
+(deftest greet-person-by-name
+  (let [{:keys [status content-type body]}
+        (http-get "/hello?name=Ada")]
+    (is (= 200 status))
+    (is (re-matches #"(?i)text/plain\s*;\s*charset=utf-8"
+                    content-type))
+    (is (= "Welcome to Clojure, Ada!" body))))
 ```
 
-This is an **illustration**, not a test already present in the repository. It checks the **"Ada" business example** through its concrete HTTP mapping. It should initially fail because the current `/hello` endpoint always returns `Welcome to Clojure, World!`. Add equivalent acceptance checks for the other agreed cases as the increment progresses.
+The helper is **test infrastructure**, local to the acceptance namespace; it must not be copied into the pure `foo.greeting-test` unit-test namespace. It starts and stops a fresh system for each request, with `finally` ensuring cleanup. The executable example checks the **"Ada" business criterion** and the HTTP response contract. Add separate tests for omitted and explicitly empty names; both expect `World`.
 
-Run `(test-one 'foo.acceptance.greeting-test/personalised-greeting-acceptance-test)` to target this example, or `(accept)` for the acceptance suite. Confirm the *expected* failure. A typo, missing namespace or test setup exception is **not** the desired Red stage.
+At the beginning of an ATDD cycle, run `(test-one 'foo.acceptance.greeting-test/greet-person-by-name)` or `(accept)` and confirm **RED due to the missing behaviour**. After implementation it should be GREEN. A missing file, absent test Var, compilation error or HTTP setup exception is **not** a valid RED. Running the acceptance suite after the behaviour is already implemented demonstrates coverage, but does not retroactively establish an ATDD red-first sequence.
 
 Using port `0` asks the operating system to allocate a free port, avoiding conflicts with the development server.
 
@@ -187,7 +191,7 @@ Before declaring the Issue ready:
 
 Dedicated acceptance tests live under `test/foo/acceptance/`. Our first example, `foo.acceptance.health-test` in `test/foo/acceptance/health_test.clj`, exercises `/health` over real HTTP using a temporary Component-managed Jetty server. It verifies *already agreed* behaviour; it is not an example of the RED stage for a new feature.
 
-`dev/user.clj` keeps two explicit test namespace lists: `regular-test-namespaces` and `acceptance-test-namespaces`. `(accept)` runs the second; `(check)` combines both. **When adding a new acceptance namespace, add it once to `acceptance-test-namespaces`** so both commands cover it. This deliberate, visible configuration keeps the REPL workflow simple while the test suite is small.
+`dev/user.clj` currently names test namespaces **directly in two functions**, not in central `regular-test-namespaces` / `acceptance-test-namespaces` Vars. `(accept)` runs the acceptance namespaces; `(check)` refreshes code and invokes `(run-tests)` for the entire REPL suite. **When adding a new acceptance namespace, add it to both `(accept)` and `(run-tests)`**. Read the actual source before following an example in documentation.
 
 `make test` uses the Cognitect test runner and discovers test namespaces from the `test` directory independently of these REPL lists. Verify both `(check)` and `make test` whenever adding or moving a namespace; don't assume a passing suite implies a new test was executed.
 
@@ -211,10 +215,11 @@ The current test suite covers:
 | `foo.http-test` | Ring/Reitit HTTP responses and unknown-route handling |
 | `foo.system-test` | Component-managed Jetty starts, serves real HTTP requests and stops |
 | `foo.acceptance.health-test` | Acceptance example for application liveness through real HTTP |
+| `foo.acceptance.greeting-test` | Personalised, missing-name and empty-name examples through real HTTP |
 
 The real HTTP integration test uses port `0` so the operating system selects an available port. This avoids conflicting with the development server on port 3000.
 
-After adding the `/health` acceptance example in Issue #10, the suite has **8 tests and 15 assertions**. Run it in a fresh JVM before committing:
+On the Issue #8 feature branch, the three greeting acceptance examples bring the observed fresh-JVM suite to **12 tests and 24 assertions**. Counts are a snapshot, not a permanent pass criterion: make sure the *intended test names and scenarios* are actually present before trusting the total. Run it in a fresh JVM before committing:
 
 ```sh
 make test
@@ -244,7 +249,7 @@ The REPL commands use `clojure.test`, `clojure.tools.namespace` and Component; t
 
 1. Agree on the **business-facing acceptance criterion**, distinct from the delivery mechanism.
 2. Agree on concrete examples and map each to the current public interface.
-3. Write the first executable acceptance example in `test/foo/acceptance/` and register its namespace in `acceptance-test-namespaces`.
+3. Save the first executable acceptance example in `test/foo/acceptance/` and register its namespace in both `(accept)` and `(run-tests)` in `dev/user.clj`. Verify the file contains the test before running it.
 4. Run `(accept)` (or `(test-one '.../specific-example)`) and verify that the test fails **for the intended behavioural reason**.
 5. Enter the TDD inner loop, keeping the acceptance example stable unless the agreed requirement changes.
 6. Run `(accept)` again to establish that the agreed behaviour is satisfied. Complete any other agreed examples.
@@ -291,26 +296,50 @@ The development helpers keep a `defonce` atom holding the current running Compon
 
 After changing `deps.edn`, restart the REPL to pick up the changed classpath. The SLF4J warning about no logging provider is presently nonfatal.
 
+#### Lessons from Issue #8: trustworthy ATDD feedback
+
+The personalised-greeting increment exposed several ways that a development loop can appear green without proving the intended behaviour. Apply these checks as **part of the workflow**, not just when a test fails mysteriously:
+
+1. **Save the acceptance test, then verify the file.** Check the path, namespace, and `deftest` declarations. A mistaken shell edit left `test/foo/acceptance/greeting_test.clj` at **0 bytes** while the REPL still executed a previously defined test. A successful `(accept)` is not proof that the test exists on disk. For example:
+
+   ```sh
+   wc -c test/foo/acceptance/greeting_test.clj
+   grep -n '^(deftest' test/foo/acceptance/greeting_test.clj
+   ```
+
+   The three agreed examples should have separate `deftest` definitions: `greet-person-by-name`, `greet-person-without-name`, and `greet-person-with-empty-name`. A test run can be green because an intended test was **not run**; count the intended scenarios, not just assertions or passing suites.
+
+2. **Distinguish saved code from live REPL state.** `clojure.tools.namespace` refreshes changed namespaces, but ordinary `require :reload` does not necessarily remove old Vars whose definitions have vanished from the source file. If a file was emptied, deleted, moved or renamed, old definitions can mislead you. Inspect the file and use a fresh JVM (`make test`) as the delivery gate. If `(test-one ...)` throws a `NullPointerException` inside `clojure.test/run-test-var`, check that `(requiring-resolve 'namespace/test-name)` returns a Var; a missing test is not a behavioural test failure.
+
+3. **Exercise each boundary with the right request shape.** A Ring mock may provide parsed `:query-params` even when a real Jetty request initially provides only `:query-string`. A passing handler test can therefore miss missing query-parameter middleware. When diagnosing differences, compare (a) the Ring app with a raw query string, (b) direct Jetty + Ring, (c) Component-managed Jetty, and (d) the executable acceptance test. Real HTTP acceptance checks are necessary for the public HTTP contract; mock-based handler tests remain useful for fast TDD.
+
+4. **Keep infrastructure code in infrastructure-facing tests.** `foo.greeting-test` should only exercise pure greeting logic. The helper that creates Component, binds port `0`, sends real HTTP and stops Jetty belongs in `foo.acceptance.greeting-test` (or a dedicated acceptance support namespace), **not** `foo.greeting-test`. A compile error such as `No such namespace: component` can be evidence that a helper was pasted into the wrong file. Read the *file and line number* in the error before changing application code.
+
+5. **Refactor one test at a time and stay green.** Introduce a shared `http-get` helper, verify, then convert each acceptance test to assert response data (`:status`, `:content-type`, `:body`). Keep the `try/finally` lifecycle in the helper. After every small change, run the tests and compare the intended assertions. Test code needs refactoring discipline too.
+
+6. **Review the Git worktree before staging.** `git status --short` shows modified files and untracked acceptance tests. Run `git diff -- test/foo/greeting_test.clj` to confirm a pure unit-test file was not accidentally modified by an HTTP-test refactor. Run `git diff --check` and `make test`; explicitly stage any untracked acceptance test. The new documentation should be committed alongside the behaviour it explains.
+
+These lessons reinforce the distinction between **ATDD as a shared specification and executable acceptance feedback**, **TDD as fast design feedback**, and **fresh-JVM CI as a reproducibility check**. None substitutes for the others.
+
 #### Namespace lists and complete verification
 
-The REPL suite is configured using two explicit lists in `dev/user.clj`. Their intended structure is:
+The actual implementation in `dev/user.clj` enumerates namespaces directly. Once Issue #8's acceptance tests are added, these functions should contain the following namespaces (other helper functions are omitted here):
 
 ```clojure
-(def regular-test-namespaces
-  '[foo.greeting-test
-    foo.http-test
-    foo.system-test])
-
-(def acceptance-test-namespaces
-  '[foo.acceptance.health-test])
-
 (defn run-tests []
-  (apply t/run-tests
-         (concat regular-test-namespaces
-                 acceptance-test-namespaces)))
+  (t/run-tests 'foo.greeting-test
+               'foo.http-test
+               'foo.system-test
+               'foo.acceptance.health-test
+               'foo.acceptance.greeting-test))
+
+(defn accept []
+  (when (= :ok (tn/refresh))
+    (t/run-tests 'foo.acceptance.health-test
+                 'foo.acceptance.greeting-test)))
 ```
 
-`(accept)` runs the acceptance list; `(check)` runs both lists. When adding a test namespace, update the correct list and verify it runs. `make test` discovers tests separately using the Cognitect runner. Treat consistency between REPL and CI suites as an explicit requirement.
+`(accept)` runs the acceptance tests; `(check)` refreshes changed namespaces and runs all namespaces listed by `(run-tests)`. **A fresh JVM using `make test` discovers tests independently** via the Cognitect runner. Confirm that the actual file is populated, the expected test names exist, and both runner paths include the new tests. Do not infer coverage merely from a green summary.
 
 Before creating a PR:
 
@@ -626,7 +655,7 @@ The working agreements are:
 
 - [Issue #4 — Add GET /health liveness endpoint](https://github.com/rorycawley/enduring_software/issues/4)
 - [PR #5 — HTTP health endpoint](https://github.com/rorycawley/enduring_software/pull/5)
-- [Issue #10 — Optimise REPL-driven ATDD and TDD workflow](https://github.com/rorycawley/enduring_software/issues/10) (current tooling improvement)
+- [Issue #10 — Optimise REPL-driven ATDD and TDD workflow](https://github.com/rorycawley/enduring_software/issues/10)
 - [Enduring Software Project #5](https://github.com/users/rorycawley/projects/5)
 
 This work followed the complete cycle and verified the Project's automatic transition to `Done`.
