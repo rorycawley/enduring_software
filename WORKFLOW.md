@@ -4,6 +4,10 @@ This is the repository's **single guide for how we develop and deliver a change*
 
 Our goal is to make a small, verifiable change from an agreed user outcome to working software on protected `main`, retaining a traceable link between the requirement and its tests.
 
+> **Software is built from today's understanding of reality, but it must survive tomorrow's reality.**
+
+Our two foundational design principles are **Design for Ease of Change** and **Design for a High-Performance User Experience**. See [DESIGN_PRINCIPLES.md](DESIGN_PRINCIPLES.md) for their exact definitions, guiding question, supporting practices, and review prompts. This workflow establishes evidence for correct behaviour and responsiveness; every design and PR must also consider how easy the change is to make safely.
+
 **Permanent acceptance rule: a use case is not accepted until it is both behaviourally correct and sufficiently responsive from the user's perspective.** Every use case needs explicit behavioural *and* performance acceptance criteria, with evidence for each. Performance is part of ATDD, not a separate optional exercise.
 
 ## One workflow, two feedback loops
@@ -536,6 +540,14 @@ What should someone be able to do, or what problem should be solved?
 - Measurement conditions: representative device, network, test data, concurrency, environment
 - Measurement evidence / acceptance-test link: ... (record p95, observe p99, errors)
 
+## Design impact (where relevant)
+
+- Which domain understanding, business policies, or technical assumptions are changing?
+- Where should the change be local, and what unrelated areas should remain unaffected?
+- Does the change introduce coupling or complexity justified by evidence?
+- Does it preserve the intended user experience and its performance budget?
+- Record an ADR for a consequential choice or trade-off; keep minor changes lightweight.
+
 ## Public interface contract (where relevant)
 
 - HTTP method/path, status, headers or message formats that clients rely on.
@@ -664,6 +676,8 @@ Use `git add -p` when you need more selective staging. Never include generated c
 
 ### 5. Push and create a PR linked to the Issue
 
+In the PR description, summarise the **design impact** against our two [foundational principles](DESIGN_PRINCIPLES.md): what changed, what was intentionally left unchanged, how data and effects remain understandable, and any performance-versus-changeability trade-off. Keep this proportionate to the size of the change.
+
 In the PR description, report **behavioural acceptance** and **perceived-performance acceptance** separately. Include the use-case budget, measurement conditions, results and baseline, or state plainly that an interim proxy is being used and which human-visible measurement is not yet available. Do not mark an unmeasured budget as passed.
 
 Push your short-lived branch (substitute your own branch name):
@@ -785,6 +799,7 @@ The repository's active [Protect main ruleset](https://github.com/rorycawley/end
 The working agreements are:
 
 - Keep `main` working and releasable.
+- Review meaningful design changes against [Design for Ease of Change and Design for a High-Performance User Experience](DESIGN_PRINCIPLES.md); treat patterns as optional means, not goals.
 - Use small changes and integrate frequently.
 - Describe **behavioural and human-perceived performance acceptance** in business language before implementation; keep concrete examples, timing evidence and interface-specific checks traceable to the use case. Link every meaningful change to an Issue when practical.
 - **Definition of Done for every use case:** required behaviour passes and the user-visible responsiveness budget is met with recorded, representative evidence (or the documented, genuinely long-running experience is verified). No silent/indefinite waiting, and no claiming that fast API responses prove a fast UI.

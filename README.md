@@ -2,6 +2,10 @@
 
 A small Clojure HTTP application for practising **REPL-driven development**, **acceptance test-driven development (ATDD)**, **test-driven development (TDD)** and incremental delivery.
 
+> **Software is built from today's understanding of reality, but it must survive tomorrow's reality.**
+
+Our design has two foundational principles: **Design for Ease of Change** and **Design for a High-Performance User Experience**. Read [DESIGN_PRINCIPLES.md](DESIGN_PRINCIPLES.md) for the thesis, guiding question, and how we assess design decisions.
+
 **[Read the ATDD / TDD development workflow](WORKFLOW.md)** for the complete process from agreed examples and failing acceptance tests through Red → Green → Refactor, GitHub Issues, pull requests, CI and Done. Each use case must meet behavioural **and human-perceived performance** acceptance criteria.
 
 ## Prerequisites
@@ -87,6 +91,7 @@ enduring_software/
 ├── deps.edn
 ├── Makefile
 ├── README.md
+├── DESIGN_PRINCIPLES.md       # Thesis, two design principles, and review questions
 └── WORKFLOW.md                 # ATDD, TDD and performance acceptance workflow
 ```
 
@@ -94,4 +99,4 @@ enduring_software/
 
 We use protected `main`, short-lived feature branches, [GitHub Project #5](https://github.com/users/rorycawley/projects/5), Issues with acceptance criteria, and GitHub Actions to verify tests before merging.
 
-**See [WORKFLOW.md](WORKFLOW.md)** for how to define outcomes, agree on executable acceptance examples, work through the TDD inner loop, use performance budgets, run `gh` and finish an Issue.
+**See [DESIGN_PRINCIPLES.md](DESIGN_PRINCIPLES.md)** for the design goals and trade-offs, and [WORKFLOW.md](WORKFLOW.md) for how to define outcomes, agree on executable acceptance examples, work through the TDD inner loop, use performance budgets, run `gh` and finish an Issue.
