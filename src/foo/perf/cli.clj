@@ -22,7 +22,7 @@
           {summary :summary status :status} result]
       (println (str "HTTP performance evaluation: " (str/upper-case (name status))))
       (println (format "Median p95: %.3f ms; worst p95: %.3f ms; worst p99: %.3f ms; requests: %d"
-                       (:median-p95-ms summary) (:worst-p95-ms summary)
+                       (get summary :median-p95-ms) (:worst-p95-ms summary)
                        (:worst-p99-ms summary) (:total-requests summary)))
       (doseq [failure (:failures result)] (println "FAIL:" failure))
       (doseq [warning (:warnings result)] (println "WARNING:" warning))
