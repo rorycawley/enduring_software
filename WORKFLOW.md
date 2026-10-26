@@ -4,10 +4,12 @@ This is the repository's **single guide for how we develop and deliver a change*
 
 Our goal is to make a small, verifiable change from an agreed user outcome to working software on protected `main`, retaining a traceable link between the requirement and its tests.
 
+**Permanent acceptance rule: a use case is not accepted until it is both behaviourally correct and sufficiently responsive from the user's perspective.** Every use case needs explicit behavioural *and* performance acceptance criteria, with evidence for each. Performance is part of ATDD, not a separate optional exercise.
+
 ## One workflow, two feedback loops
 
 ```text
-GitHub Issue: outcome + business-facing criteria
+GitHub Issue: outcome + behaviour + perceived-performance criteria
                      │
                      ▼
      Agree examples → (accept) RED
@@ -21,7 +23,11 @@ GitHub Issue: outcome + business-facing criteria
         └─────────────────────────┘
                      │
                      ▼
-         ATDD: (accept) GREEN
+         Behavioural ATDD: (accept) GREEN
+                     │
+                     ▼
+      Performance acceptance: measured
+        user-visible response + outcome
                      │
                      ▼
       (check) → make test → PR → CI → merge
@@ -35,7 +41,7 @@ GitHub Issue: outcome + business-facing criteria
 | Agree on **what behaviour is valuable** and what examples demonstrate it | Design and implement **how that behaviour works**, one small step at a time |
 | Driven by stakeholder outcomes and public, observable behaviour | Driven by tests of small functions, domain rules, handlers and collaborators |
 | Acceptance checks should remain meaningful if the internals change | Implementation-level tests can evolve as internals are refactored |
-| Ends when agreed examples work through the relevant public boundary | Repeats Red → Green → Refactor until the acceptance example can pass |
+| Ends only when agreed behavioural **and perceived-performance** examples pass through relevant public boundaries | Repeats Red → Green → Refactor until the behavioural acceptance example can pass |
 
 **ATDD is more than running an end-to-end test.** Its distinctive step is agreeing on specific examples *before* implementation, considering user, development and testing perspectives together. We can play these roles ourselves in this learning repository, but must still surface ambiguity before coding.
 
@@ -58,11 +64,119 @@ A published HTTP API may *also* have requirements of its own: route names, statu
 
 The test code is where the agreed example is mapped onto that interface. Keep a traceable connection from the Issue to its examples, the tests and the change that satisfies them.
 
+## Human-perceived performance is part of acceptance
+
+> **A use case is not accepted until it is both behaviourally correct and sufficiently responsive from the user's perspective.**
+
+Our quality goal is not merely a fast server. A person using the product should never think *"I am waiting; is this stuck; will it ever finish?"* Specify performance in **human experience terms**, alongside the business outcome, before selecting an implementation. Both requirements must survive a complete replacement of the application.
+
+### Default user-experience budgets
+
+| Observable experience | Initial acceptance target |
+| --- | --- |
+| **Acknowledgement / feedback** | Meaningful, truthful feedback is visible within **100 ms at p95** after the user's action. |
+| **Ordinary interactive task completion** | The intended outcome is visible within **1 second at p95**, measured end-to-end. |
+| **Long-running tasks** | Meaningful feedback still appears promptly; the person sees an honest, understandable pending state, can revisit its status, and receives a visible outcome or actionable failure. |
+| **Uncertain or indefinite waiting** | Not acceptable: no endless spinner, silent wait, or false success indication. Explicitly handle delay, timeout, loss of connectivity, and unknown outcomes. |
+
+These are **initial product targets**, not proven existing performance. p95 means 95% of measured interactions meet the budget **under agreed, representative conditions**; it is not a promise about every possible device/network. Record p99 and exceptional long waits as diagnostic evidence so a good p95 cannot conceal an unacceptable experience. Tighten or revise targets based on actual users and evidence, never merely to make a failing build green.
+
+A task should be classified **before implementation** as *ordinary interactive* or *legitimately long-running*. Do not classify a slow implementation as long-running after the fact to avoid the 1-second goal. Some tasks (payments, background processing, external approvals) are genuinely asynchronous; a fast acknowledgement is **not** proof the work has finished. Distinguish *Sending*, *Accepted/Pending*, *Completed*, *Failed*, and *Status unknown* honestly, and provide a way to recover or check. Set task-appropriate timeout/status-update expectations rather than allowing endless ambiguity.
+
+### Specify it for every use case
+
+For each use case or task-based UI interaction, record **alongside its behavioural acceptance**:
+
+1. **Human action and visible result** — where the timer starts (e.g. pressing *Draw names*) and exactly what counts as first meaningful feedback and completed user-visible outcome. An on-screen confirmation is different from an HTTP `200` or a queued message.
+2. **Performance acceptance** — the 100 ms feedback budget and 1-second ordinary-completion budget, or a justified long-running exception with explicit visible states, recovery and completion/failure handling. Specify any more suitable use-case-specific thresholds here.
+3. **Representative measurement conditions** — reference device/browser, network, data size, expected concurrent usage, warm-up and environment. Avoid passing only on a developer's unusually fast computer or failing on noisy infrastructure.
+4. **Executable evidence** — the scenario/test identifier, measured feedback and completion latency distributions (at least p95; observe p99), errors, environment and baseline. Keep the evidence traceable to the use case and PR.
+
+Examples showing why **ordinary** and **long-running** use cases should be distinct decisions:
+
+```gherkin
+Scenario: Organiser starts the Secret Santa draw (ordinary task)
+  Given an exchange is ready for drawing
+  When the organiser starts the draw
+  Then meaningful feedback is visible within 100 ms
+  And the confirmed draw result is visible within 1 second
+  And the assignments respect the agreed drawing rules
+
+Scenario: Payment is awaiting an external provider (long-running task)
+  Given an organiser is ready to pay for the exchange
+  When they submit the payment
+  Then the interface acknowledges the action within 100 ms
+  And it shows whether payment is sending, pending, confirmed or failed
+  And a pending payment has a way to check its status later
+  And a delay or unknown outcome never appears as confirmed payment
+```
+
+The examples define the experience; percentile thresholds are evaluated across repeated runs in the agreed environment, **not** inferred from a single Gherkin execution. Behavioural checks also verify that pending/success/failure states are honest. Do not substitute "show any spinner within 100 ms" for meaningful feedback or permit all ordinary tasks to become indefinitely pending.
+
+### Measure the whole user journey, not an internal function
+
+- **Once a UI exists:** measure from the actual human action to the **visible change** in a real browser, then to the **visible task outcome**, using representative conditions. An API acknowledgement is an intermediate milestone, not proof of task completion.
+- **While this repository is HTTP-only:** measure real client-to-Jetty HTTP round trips as a **temporary proxy**, clearly labelled *API performance*, not as proof of 100 ms human-visible feedback. Ring mocks and pure-function microbenchmarks can help diagnose issues but cannot establish perceived performance.
+- **For non-UI or automated use cases:** still specify performance acceptance at the meaningful consumer-visible boundary and choose a relevant outcome deadline. Do not leave the performance section blank; explain why the general UI budgets do not apply.
+
+Keep the implementation of performance measurement **small and reusable**: one shared way to exercise a use case, time feedback/outcome, record the result, and compare against its acceptance budget. Measurements should use a warmed system and sufficient repeated samples to make percentiles meaningful. Do not time a single REPL expression and call it a user-experience acceptance test.
+
+### How performance fits into the two ATDD/TDD loops
+
+1. **Agree before coding:** user, developer and tester agree on behavioural examples **and** human-perceived performance examples/budgets for the use case. Both live in the Issue.
+2. **Behavioural ATDD RED → TDD RED/GREEN/REFACTOR:** use our existing fast `(accept)`, `(test-one ...)` and `(check)` feedback loop. Do not force statistical timing assertions into quick unit tests.
+3. **Performance acceptance:** run the real user journey under repeatable conditions, measure acknowledgement and final visible outcome, and compare with the specified budgets. If the result fails, the use case remains unaccepted even if every behavioural test is green. Measure again after relevant refactoring.
+4. **Evidence before Done:** keep the performance results and conditions with the Issue/PR, alongside behavioural test results. Watch regression trends from a baseline, not only absolute pass/fail numbers.
+
+A small performance-evidence record is enough:
+
+```text
+Use case: <name / ID>              Behaviour: PASS / FAIL
+Feedback: target p95 <=100 ms     Observed p95: <value>
+Completion: target p95 <=1 s     Observed p95: <value>
+Slow tail: observed p99 <value>   Errors: <count>
+Conditions: <device, network, data, concurrency, environment>
+Evidence: <test/run link>         Result: PASS / FAIL / NOT YET MEASURED
+```
+
+For an agreed long-running use case, replace the 1-second completion budget with its documented pending/status/outcome criteria; don't record an immediate acknowledgement as a completed task.
+
+**Automation and gating:** `make perf` provides an initial, reproducible **real-HTTP API latency baseline** for the greeting use case. It does not measure visible feedback or completion in a browser, and it has no p95 acceptance threshold yet. Keep the actual human-perceived acceptance criterion recorded and distinguish **API BASELINE RECORDED** from **HUMAN PERFORMANCE ACCEPTED**. A future UI use case cannot be accepted solely on API numbers. Shared GitHub-hosted runners have variable timing: do **not** enforce fragile 100 ms thresholds on an uncontrolled runner. Until a trustworthy timed gate is available, PR review requires explicit performance evidence; a green `make test` does **not** certify responsiveness.
+
+### Executing the first HTTP performance baseline
+
+This repository has a **separate, report-only** benchmark harness that does not change `make test` or the required GitHub Actions check. Install [Vegeta](https://github.com/tsenart/vegeta) (on macOS: `brew install vegeta`), then from the repository root:
+
+```sh
+make perf
+```
+
+The command starts its **own** Component-managed Jetty instance bound to loopback on an OS-selected port (so it will not conflict with a REPL server on port 3000). It waits for `/health`, confirms the `/hello?name=Ada` response, warms up the running JVM, and issues a fixed-rate sample of HTTP requests. It reports p50, p95, p99, throughput, status codes and errors. It always attempts to stop the temporary application process afterwards.
+
+The default workload is **20 requests/second**, **5 seconds warmup**, and **30 seconds measurement**, with a **5-second request timeout**. For example, to specify a different representative load:
+
+```sh
+PERF_RATE=50 PERF_DURATION=60s PERF_WARMUP=10s make perf
+```
+
+Outputs are saved under ignored `perf/results/<UTC-date>-<git-revision>-<run-id>/` as `report.txt`, `report.json`, `samples.bin`, `metadata.txt`, and `server.log`. Include the commit, environment, load, latency percentiles, success/error details, and link/path to the report in the Issue or PR. Prefer comparisons from the same controlled machine and matching workload; a laptop measurement is not directly comparable with a shared GitHub Actions runner.
+
+**Interpretation:** These results are **HTTP round-trip timings**, not the user's 100 ms visual acknowledgement or 1-second visible task completion. Do not call a use case performance-accepted merely because `make perf` ran or produced a low p95. The first run establishes evidence, not a pass/fail SLA; define stable, use-case-specific performance budgets after collecting representative baseline measurements. Do not add timing-sensitive checks to the ordinary `make test` suite. A future browser harness will measure actual action-to-visible feedback/completion and should supply the human-perceived performance acceptance result.
+
+### Incremental rollout for this repository
+
+1. **Now — specification:** make behavioural and perceived-performance criteria mandatory in every new or revised use-case Issue. Add a performance-evidence line to the PR and Definition of Done.
+2. **First infrastructure increment — API baseline:** `make perf` starts a separate Jetty instance on an OS-selected loopback port, warms it, and measures real HTTP requests for `/hello?name=Ada` using Vegeta. Save the baseline results and repeat under matching conditions. This is an **API proxy**, not a human-perceived UI acceptance measurement. Existing Issue #8 was completed before this requirement; do not misrepresent it as already performance-accepted.
+3. **When Angular task-based UI arrives — end-to-end measurement:** use a shared browser-driven journey measurement for first feedback and completed outcome, including truthful pending and failure states. Reuse this harness for subsequent use cases instead of bespoke timing code in every test.
+4. **When results are stable — permanent safeguards:** run use-case performance checks in a controlled environment as part of delivery, publish baseline comparisons in PRs, and observe real-user responsiveness and slow-tail regressions after deployment.
+
+The rule **takes effect immediately**; the automation grows incrementally. We should never confuse *"we ran a test"* with *"we proved the person did not have to wait uncertainly"*.
+
 ## ATDD: discover and agree on the behaviour first
 
 ### 1. Record the desired outcome and business-facing rules
 
-Write an Issue describing a meaningful change in observable behaviour, not a prescribed internal design. State who benefits, what they want to accomplish and what would count as success.
+Write an Issue describing a meaningful change in observable behaviour, not a prescribed internal design. State who benefits, what they want to accomplish and what would count as success. **For every use case, also write its perceived-performance acceptance budget and the visible feedback/completion states.** See [Human-perceived performance is part of acceptance](#human-perceived-performance-is-part-of-acceptance).
 
 Example for [Issue #8 — personalised greetings](https://github.com/rorycawley/enduring_software/issues/8) (used here as a worked example):
 
@@ -80,11 +194,11 @@ Importantly, **no name supplied** and **an explicitly empty name supplied** are 
 
 ### 2. Discuss concrete examples (Three Amigos)
 
-Approach each example from three perspectives:
+Approach each example from three perspectives, considering **responsiveness and behaviour together**:
 
-- **User / stakeholder:** What should the person experience? Does the outcome solve the problem?
+- **User / stakeholder:** What should the person experience? Does the outcome solve the problem? When would they begin to feel that they are waiting or have lost control?
 - **Developer:** What is unclear, difficult, or dependent on another behaviour?
-- **Tester:** Which contrasting or boundary cases might disprove our shared understanding?
+- **Tester:** Which contrasting or boundary cases might disprove our shared understanding? How will we verify both the visible result and its timing under representative load?
 
 Express acceptance scenarios in domain language first. For example, these are the three currently agreed cases for Issue #8:
 
@@ -124,6 +238,8 @@ The mapping makes the requirement testable while keeping the business specificat
 **Do not silently decide unresolved cases.** For example, a name containing only whitespace might count as no name, might be rejected, or might have another agreed meaning. Record it as a question until the expected behaviour is decided. Do the same for other relevant missing, invalid or unusually long inputs rather than inventing policies to increase test counts.
 
 ### 3. Make the examples executable — ATDD RED
+
+Keep the performance criterion and its measurement conditions next to the behavioural examples from the outset. The first RED step usually concerns behaviour; a later end-to-end measurement supplies separate quantitative performance evidence. Do not claim the whole use case is accepted when only behaviour turns GREEN.
 
 Translate an **agreed example** into an acceptance test at the **public boundary that expresses the requirement**. The test code may mention URLs, status codes and response headers; the business-facing rule above should not have to. For the current HTTP application, that boundary is often real HTTP through Component-managed Jetty. For a future bounded context, it might be its public contract, supported by separate real-adapter integration tests.
 
@@ -181,7 +297,8 @@ Once the acceptance example passes, check the other agreed examples and any exis
 
 Before declaring the Issue ready:
 
-- Confirm every **agreed acceptance example** is covered and passing, and remains traceable to its business-facing criterion.
+- Confirm every **agreed behavioural acceptance example** is covered and passing, and remains traceable to its business-facing criterion.
+- Verify **perceived-performance acceptance** for each affected use case: human-visible feedback/completion against its agreed budget (or a clearly identified interim API proxy before the UI exists), along with honest delay, failure and unknown-state behaviour. Record measurement conditions and results; do not declare unmeasured targets satisfied.
 - Run the entire suite in a fresh JVM using `make test`.
 - Review what the tests *do not* establish: public contracts, failures and assumptions should be explicit.
 - Verify with stakeholders where possible; a green automated test does not replace agreement on the outcome.
@@ -189,7 +306,7 @@ Before declaring the Issue ready:
 
 ### Where acceptance tests live
 
-Dedicated acceptance tests live under `test/foo/acceptance/`. Our first example, `foo.acceptance.health-test` in `test/foo/acceptance/health_test.clj`, exercises `/health` over real HTTP using a temporary Component-managed Jetty server. It verifies *already agreed* behaviour; it is not an example of the RED stage for a new feature.
+Behavioural acceptance tests live under `test/foo/acceptance/`; **timed performance acceptance** can use a separate reproducible harness while sharing the same use-case specification and evidence. We should not mix noisy time thresholds into the fast Clojure test runner. The existing dedicated acceptance tests live under `test/foo/acceptance/`. Our first example, `foo.acceptance.health-test` in `test/foo/acceptance/health_test.clj`, exercises `/health` over real HTTP using a temporary Component-managed Jetty server. It verifies *already agreed* behaviour; it is not an example of the RED stage for a new feature.
 
 `dev/user.clj` currently names test namespaces **directly in two functions**, not in central `regular-test-namespaces` / `acceptance-test-namespaces` Vars. `(accept)` runs the acceptance namespaces; `(check)` refreshes code and invokes `(run-tests)` for the entire REPL suite. **When adding a new acceptance namespace, add it to both `(accept)` and `(run-tests)`**. Read the actual source before following an example in documentation.
 
@@ -219,13 +336,13 @@ The current test suite covers:
 
 The real HTTP integration test uses port `0` so the operating system selects an available port. This avoids conflicting with the development server on port 3000.
 
-On the Issue #8 feature branch, the three greeting acceptance examples bring the observed fresh-JVM suite to **12 tests and 24 assertions**. Counts are a snapshot, not a permanent pass criterion: make sure the *intended test names and scenarios* are actually present before trusting the total. Run it in a fresh JVM before committing:
+After Issue #8, the three greeting acceptance examples brought the fresh-JVM suite to **12 tests and 24 assertions**. Counts are a snapshot, not a permanent pass criterion: make sure the *intended test names and scenarios* are actually present before trusting the total. Run it in a fresh JVM before committing:
 
 ```sh
 make test
 ```
 
-These tests verify behaviour at different boundaries. A passing suite is useful evidence, not a guarantee that every possible defect has been prevented.
+These tests verify **behaviour** at different boundaries. A passing suite is useful evidence, not a guarantee that every possible defect has been prevented — and not proof that a task satisfies its **human-perceived performance acceptance**. That requires separate, representative measurements.
 
 ## REPL development loop
 
@@ -387,7 +504,7 @@ You do not need to repeat this command for every Issue.
 
 ### 1. Capture one piece of work
 
-Start with a GitHub Issue whose description focuses on *what must be true*, not on internal implementation choices. Specify the **business rules first**, clarify them with examples, and record the technical public contract separately where needed:
+Start with a GitHub Issue whose description focuses on *what must be true*, not on internal implementation choices. Specify the **business rules first**, clarify them with examples, **specify human-perceived performance for every use case**, and record the technical public contract separately where needed:
 
 ```markdown
 ## Outcome
@@ -399,10 +516,19 @@ What should someone be able to do, or what problem should be solved?
 - When [business situation], [required observable outcome].
 - ...
 
-## Agreed examples
+## Agreed behavioural examples
 
 - Given ..., when ..., then ...
 - Include contrasting and boundary examples where relevant.
+
+## Performance acceptance (required for each use case)
+
+- Human action / event that starts timing: ...
+- First meaningful visible feedback: ... within 100 ms at p95 (or justified alternative)
+- Visible completion: ... within 1 second at p95 for ordinary tasks (or justified long-running classification)
+- Long-running/failed/unknown state, status/recovery/timeout expectations: ...
+- Measurement conditions: representative device, network, test data, concurrency, environment
+- Measurement evidence / acceptance-test link: ... (record p95, observe p99, errors)
 
 ## Public interface contract (where relevant)
 
@@ -415,9 +541,10 @@ What should someone be able to do, or what problem should be solved?
 
 ## Verification
 
-- Executable acceptance tests for agreed examples
+- Executable behavioural acceptance tests for agreed examples
+- Measured performance acceptance for the affected use cases, with conditions, baseline and evidence
 - Fast domain/handler tests and real-adapter integration tests as needed
-- All tests pass locally and in CI
+- Behavioural tests pass locally and in CI; the agreed performance gate/evidence also passes before Done
 ```
 
 Create an Issue and add it to the Project:
@@ -507,7 +634,9 @@ Start the REPL in one terminal:
 make repl
 ```
 
-Agree on business-facing criteria and concrete examples, map them to the published interface, and make the first acceptance test fail for the expected reason using `(accept)`. Then use `(test-one 'namespace/test-name)` in the TDD inner loop (Red → Green → Refactor). Run `(accept)` again when the feature is ready, and `(check)` for the whole configured suite. Use `(go)` only when restarting the interactive Component-managed development server after source changes.
+Agree on **both behavioural and perceived-performance acceptance** for the use case, with a human-visible start/end point and representative measurement conditions. Map behaviour to the published interface and make the first behavioural acceptance test fail for the expected reason using `(accept)`. Then use `(test-one 'namespace/test-name)` in the TDD inner loop (Red → Green → Refactor). Run `(accept)` again when the feature is ready, and `(check)` for the whole configured suite. Use `(go)` only when restarting the interactive Component-managed development server after source changes.
+
+**Before calling the use case accepted**, perform its repeatable end-to-end performance measurement, record p95 (and observe p99), verify any pending/error states, and attach the result to the Issue/PR. With today's HTTP-only app, a real-HTTP performance probe is explicitly interim evidence; browser-visible measurements replace that proxy when the UI is delivered. Run `make perf` for the available HTTP API proxy and record its report path; measure browser-visible feedback and outcomes separately once the UI exists.
 
 In a separate terminal, verify the final increment:
 
@@ -528,6 +657,8 @@ git commit -m "feat: add HTTP health endpoint"
 Use `git add -p` when you need more selective staging. Never include generated caches or credentials.
 
 ### 5. Push and create a PR linked to the Issue
+
+In the PR description, report **behavioural acceptance** and **perceived-performance acceptance** separately. Include the use-case budget, measurement conditions, results and baseline, or state plainly that an interim proxy is being used and which human-visible measurement is not yet available. Do not mark an unmeasured budget as passed.
 
 Push your short-lived branch (substitute your own branch name):
 
@@ -562,7 +693,7 @@ The workflow in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) executes 
 
 The required check is named **`Test`** (shown in the CLI as `CI/Test (pull_request)`). If `gh pr checks --watch` initially reports no checks, the workflow may not yet have started; check the PR's Actions tab or run the command again.
 
-If tests fail, correct the problem on the same branch, rerun local tests, commit and push; do not bypass branch protection.
+If tests fail, correct the problem on the same branch, rerun local tests, commit and push; do not bypass branch protection. **This existing check verifies behavioural tests, not timing.** Performance acceptance must also be demonstrated before accepting a use case. Once the timing environment is controlled and the harness reliable, add a separate required performance check rather than treating GitHub-hosted runner wall-clock timing as reliable.
 
 ### 7. Merge, close the Issue and finish the Project item
 
@@ -612,9 +743,13 @@ git switch main
 git pull --ff-only
 git switch -c feat/ISSUE-NUMBER-short-description
 
+# Agree behavioural + human-perceived performance acceptance for every use case
 # Work in the REPL: (test-one 'namespace/test-name), (accept), (check)
 # Use (go) to restart the development server when needed
 make test
+# Record HTTP API latency where applicable (proxy only, not visible UI performance)
+make perf
+# For UI use cases, separately measure user-visible feedback and task completion
 git diff --check
 
 git add -p  # Stage the intended changes; add new files explicitly
@@ -644,7 +779,8 @@ The working agreements are:
 
 - Keep `main` working and releasable.
 - Use small changes and integrate frequently.
-- Describe acceptance criteria in business language before implementation; keep concrete examples and interface-specific checks traceable to them. Link every meaningful change to an Issue when practical.
+- Describe **behavioural and human-perceived performance acceptance** in business language before implementation; keep concrete examples, timing evidence and interface-specific checks traceable to the use case. Link every meaningful change to an Issue when practical.
+- **Definition of Done for every use case:** required behaviour passes and the user-visible responsiveness budget is met with recorded, representative evidence (or the documented, genuinely long-running experience is verified). No silent/indefinite waiting, and no claiming that fast API responses prove a fast UI.
 - Evaluate expressions and run focused tests from the REPL during TDD; run `(accept)` for ATDD, `(check)` for the full REPL suite and `make test` before creating the PR.
 - Commit behaviour and its tests together.
 - Let CI confirm the result before merging.

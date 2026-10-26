@@ -1,4 +1,4 @@
-.PHONY: repl run test
+.PHONY: repl run test perf
 
 repl:
 	rlwrap clojure -M:dev
@@ -8,3 +8,6 @@ run:
 
 test:
 	clojure -X:test
+
+perf:
+	bash perf/run.sh
