@@ -1,0 +1,14 @@
+;; Interim HTTP-only guardrails for the existing greeting use case.
+;; NOT the user's 100 ms visible-feedback or 1 s task-completion acceptance.
+;; These conservative provisional limits must be calibrated on comparable runs.
+{:use-case :personalised-greeting
+ :boundary :http
+ :run-count 3
+ :minimum-requests-per-run 100
+ :max-p95-ms 100.0
+ :max-p99-ms 250.0
+ ;; Only fill baseline-p95-ms with a value from repeated measurements in the
+ ;; SAME machine/workload environment (never copy a Mac value into Linux CI).
+ :baseline-p95-ms nil
+ :warn-regression-factor 1.5
+ :warn-regression-min-ms 5.0}
