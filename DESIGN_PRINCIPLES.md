@@ -26,6 +26,18 @@ The measure of performance is the experience of accomplishing a task, not merely
 
 These principles guide our trade-offs; they do not replace correctness, security, privacy, reliability, accessibility, or other requirements of a particular system.
 
+## Deliberately limited objectives
+
+**We deliberately constrain our architectural objectives to two: ease of change and a high-performance user experience.**
+
+This focus is intentional. A longer list of equally weighted goals makes trade-offs less clear. Every additional abstraction, pattern, or technology must justify the complexity it introduces.
+
+We do not pursue architectural sophistication for its own sake. We choose mechanisms when evidence and sound reasoning show they help achieve one or both objectives **while satisfying the system's essential requirements**. Neither a familiar pattern nor a hypothetical future need is sufficient justification on its own.
+
+**We constrain what we optimise for, not what we are willing to learn.**
+
+We remain open to new evidence about the domain, users, and technology, and we revisit choices when the assumptions supporting them change. The constraint focuses our decisions; it must never freeze our understanding of reality.
+
 ## Designing for ease of change
 
 We favour design choices that make it possible to reason about a change and understand its consequences:
