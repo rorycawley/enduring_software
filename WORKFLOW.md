@@ -141,34 +141,40 @@ Evidence: <test/run link>         Result: PASS / FAIL / NOT YET MEASURED
 
 For an agreed long-running use case, replace the 1-second completion budget with its documented pending/status/outcome criteria; don't record an immediate acknowledgement as a completed task.
 
-**Automation and gating:** `make perf` provides an initial, reproducible **real-HTTP API latency baseline** for the greeting use case. It does not measure visible feedback or completion in a browser, and it has no p95 acceptance threshold yet. Keep the actual human-perceived acceptance criterion recorded and distinguish **API BASELINE RECORDED** from **HUMAN PERFORMANCE ACCEPTED**. A future UI use case cannot be accepted solely on API numbers. Shared GitHub-hosted runners have variable timing: do **not** enforce fragile 100 ms thresholds on an uncontrolled runner. Until a trustworthy timed gate is available, PR review requires explicit performance evidence; a green `make test` does **not** certify responsiveness.
+**Automation and gating:** `make perf` now runs three warmed, independent HTTP measurements and evaluates them against provisional **HTTP-only** guardrails. `make perf-check` additionally exits nonzero on an absolute HTTP budget violation or bad request outcome. These do **not** measure visual feedback or completion in a browser. Distinguish **HTTP GUARDRAIL PASS** from **HUMAN PERFORMANCE ACCEPTED**. Shared GitHub-hosted runners have variable timing; their separate performance job is **informational** until a trustworthy measurement environment has been established. The existing `Test` job stays required.
 
-### Executing the first HTTP performance baseline
+### HTTP performance budgets and regression checks
 
-This repository has a **separate, report-only** benchmark harness that does not change `make test` or the required GitHub Actions check. Install [Vegeta](https://github.com/tsenart/vegeta) (on macOS: `brew install vegeta`), then from the repository root:
+The greeting benchmark measures client-to-Jetty HTTP round trips (not browser painting). Install [Vegeta](https://github.com/tsenart/vegeta) (`brew install vegeta` on macOS), then:
 
 ```sh
-make perf
+make perf        # Measure three runs and report PASS / WARNING / FAIL without latency gating
+make perf-check  # Same measurement, but fail when the provisional HTTP budget is exceeded
 ```
 
-The command starts its **own** Component-managed Jetty instance bound to loopback on an OS-selected port (so it will not conflict with a REPL server on port 3000). It waits for `/health`, confirms the `/hello?name=Ada` response, warms up the running JVM, and issues a fixed-rate sample of HTTP requests. It reports p50, p95, p99, throughput, status codes and errors. It always attempts to stop the temporary application process afterwards.
+The harness starts a separate Component-managed Jetty instance on an ephemeral loopback port, checks the response, and warms the JVM **before each** measured round. Defaults are **3 rounds**, each at **20 requests/second for 30 seconds**, with **5 seconds warmup** and a **5-second request timeout**. The shell script stops the server even when testing fails. It accepts rate, duration, warmup, and timeout overrides (`PERF_RATE`, `PERF_DURATION`, `PERF_WARMUP`, `PERF_TIMEOUT`), but only compare measurements with the **same** workload and machine class. Each round needs enough requests to generate useful percentile evidence (minimum 100 per round in the current configuration).
 
-The default workload is **20 requests/second**, **5 seconds warmup**, and **30 seconds measurement**, with a **5-second request timeout**. For example, to specify a different representative load:
+`perf/budgets.edn` contains explicit **provisional API guardrails** for this greeting use case: p95 no more than 100 ms, p99 no more than 250 ms, and all requests returning HTTP 200 with no reported errors. They are conservative starting limits **pending calibration**, not human-visible response SLOs, and do not imply that a 100 ms backend request leaves enough time for a 100 ms visible response. Every individual run must satisfy the absolute budget; a fast median cannot hide one bad run. The evaluator also rejects absent, invalid, or insufficient reports.
+
+The `foo.perf.evaluate` pure Clojure function is covered by deterministic `clojure.test` examples for pass, warning, fail, and invalid reports. `foo.perf.cli` reads Vegeta's JSON reports, converts nanoseconds to milliseconds, and returns an appropriate process exit status. The median of three p95 measurements is reported as a baseline indicator, not used to excuse a failed run. A **warning** can identify unstable rounds or a meaningful slowdown against a **comparable** baseline (at least 1.5x *and* 5 ms slower, by default). The `:baseline-p95-ms` setting is deliberately `nil` initially: never copy a value measured on a developer's Mac into the shared Linux runner and claim a like-for-like regression. Calibrate the reference using repeated measurements on the same hardware, with the same JVM and workload, before enabling relative comparisons.
+
+Generated reports live under ignored `perf/results/<UTC-date>-<git-revision>-<run-id>/` as `run-N.bin`, `run-N.txt`, `run-N.json`, `evaluation.txt`, `metadata.txt`, and `server.log`. Keep the report with the PR as evidence, including any warnings, and investigate failures before declaring performance acceptable. For example:
 
 ```sh
 PERF_RATE=50 PERF_DURATION=60s PERF_WARMUP=10s make perf
 ```
 
-Outputs are saved under ignored `perf/results/<UTC-date>-<git-revision>-<run-id>/` as `report.txt`, `report.json`, `samples.bin`, `metadata.txt`, and `server.log`. Include the commit, environment, load, latency percentiles, success/error details, and link/path to the report in the Issue or PR. Prefer comparisons from the same controlled machine and matching workload; a laptop measurement is not directly comparable with a shared GitHub Actions runner.
+**GitHub Actions:** The existing required `Test` job still runs `make test` and now includes the pure evaluator tests. An additional **Performance (informational)** job installs a pinned Vegeta binary, executes three shortened 10-second HTTP runs with `make perf-check`, and uploads the measurement artifacts. The job intentionally uses `continue-on-error: true` because runner timing is variable. A green PR is therefore **not** evidence that the human-perceived performance target was satisfied; the reviewer must inspect this evidence and the use-case-specific acceptance budget. Do not make shared-runner absolute timing a required branch-protection check until its variability is understood.
 
-**Interpretation:** These results are **HTTP round-trip timings**, not the user's 100 ms visual acknowledgement or 1-second visible task completion. Do not call a use case performance-accepted merely because `make perf` ran or produced a low p95. The first run establishes evidence, not a pass/fail SLA; define stable, use-case-specific performance budgets after collecting representative baseline measurements. Do not add timing-sensitive checks to the ordinary `make test` suite. A future browser harness will measure actual action-to-visible feedback/completion and should supply the human-perceived performance acceptance result.
+**Future Angular UI:** User-perceived acceptance will time the actual interaction-to-visible-feedback and interaction-to-visible-outcome in a browser. Our provisional HTTP guardrail is an intermediate supporting requirement only; it cannot substitute for the permanent **100 ms visible-feedback / 1-second ordinary completion** targets.
 
 ### Incremental rollout for this repository
 
 1. **Now — specification:** make behavioural and perceived-performance criteria mandatory in every new or revised use-case Issue. Add a performance-evidence line to the PR and Definition of Done.
 2. **First infrastructure increment — API baseline:** `make perf` starts a separate Jetty instance on an OS-selected loopback port, warms it, and measures real HTTP requests for `/hello?name=Ada` using Vegeta. Save the baseline results and repeat under matching conditions. This is an **API proxy**, not a human-perceived UI acceptance measurement. Existing Issue #8 was completed before this requirement; do not misrepresent it as already performance-accepted.
-3. **When Angular task-based UI arrives — end-to-end measurement:** use a shared browser-driven journey measurement for first feedback and completed outcome, including truthful pending and failure states. Reuse this harness for subsequent use cases instead of bespoke timing code in every test.
-4. **When results are stable — permanent safeguards:** run use-case performance checks in a controlled environment as part of delivery, publish baseline comparisons in PRs, and observe real-user responsiveness and slow-tail regressions after deployment.
+3. **Second infrastructure increment — provisional API budgets:** three warmed runs, a deterministic evaluator, conservative HTTP guardrails and informational GitHub Actions evidence. The absolute limits are provisional and regression comparisons require matching environments.
+4. **When Angular task-based UI arrives — end-to-end measurement:** use a shared browser-driven journey measurement for first feedback and completed outcome, including truthful pending and failure states. Reuse this harness for subsequent use cases instead of bespoke timing code in every test.
+5. **When results are stable — permanent safeguards:** run use-case performance checks in a controlled environment as part of delivery, publish baseline comparisons in PRs, and observe real-user responsiveness and slow-tail regressions after deployment.
 
 The rule **takes effect immediately**; the automation grows incrementally. We should never confuse *"we ran a test"* with *"we proved the person did not have to wait uncertainly"*.
 
@@ -636,7 +642,7 @@ make repl
 
 Agree on **both behavioural and perceived-performance acceptance** for the use case, with a human-visible start/end point and representative measurement conditions. Map behaviour to the published interface and make the first behavioural acceptance test fail for the expected reason using `(accept)`. Then use `(test-one 'namespace/test-name)` in the TDD inner loop (Red → Green → Refactor). Run `(accept)` again when the feature is ready, and `(check)` for the whole configured suite. Use `(go)` only when restarting the interactive Component-managed development server after source changes.
 
-**Before calling the use case accepted**, perform its repeatable end-to-end performance measurement, record p95 (and observe p99), verify any pending/error states, and attach the result to the Issue/PR. With today's HTTP-only app, a real-HTTP performance probe is explicitly interim evidence; browser-visible measurements replace that proxy when the UI is delivered. Run `make perf` for the available HTTP API proxy and record its report path; measure browser-visible feedback and outcomes separately once the UI exists.
+**Before calling the use case accepted**, perform its repeatable end-to-end performance measurement, record p95 (and observe p99), verify any pending/error states, and attach the result to the Issue/PR. With today's HTTP-only app, a real-HTTP performance probe is explicitly interim evidence; browser-visible measurements replace that proxy when the UI is delivered. Run `make perf` and, where appropriate, `make perf-check` for the interim HTTP proxy, and record the status/report path; measure browser-visible feedback and outcomes separately once the UI exists.
 
 In a separate terminal, verify the final increment:
 
@@ -689,11 +695,11 @@ gh pr view --web
 gh pr checks --watch
 ```
 
-The workflow in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) executes `make test` using Java 21 and the Clojure CLI on pull requests targeting `main` and on pushes to `main`.
+The workflow in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) executes `make test` using Java 21 and the Clojure CLI on pull requests targeting `main` and pushes to `main`. It also executes an independent **Performance (informational)** job, retaining real HTTP performance reports as build artifacts.
 
 The required check is named **`Test`** (shown in the CLI as `CI/Test (pull_request)`). If `gh pr checks --watch` initially reports no checks, the workflow may not yet have started; check the PR's Actions tab or run the command again.
 
-If tests fail, correct the problem on the same branch, rerun local tests, commit and push; do not bypass branch protection. **This existing check verifies behavioural tests, not timing.** Performance acceptance must also be demonstrated before accepting a use case. Once the timing environment is controlled and the harness reliable, add a separate required performance check rather than treating GitHub-hosted runner wall-clock timing as reliable.
+If tests fail, correct the problem on the same branch, rerun local tests, commit and push; do not bypass branch protection. **The required `Test` check verifies behavioural tests and the pure budget evaluator, not live human responsiveness.** Review the separate informational performance job and its artifacts for HTTP timing evidence, and investigate any budget failure or warning. The shared runner is not a calibrated measurement environment, so timing regressions are not yet a required check. Actual browser-visible performance acceptance remains required when a UI exists.
 
 ### 7. Merge, close the Issue and finish the Project item
 
@@ -747,6 +753,7 @@ git switch -c feat/ISSUE-NUMBER-short-description
 # Work in the REPL: (test-one 'namespace/test-name), (accept), (check)
 # Use (go) to restart the development server when needed
 make test
+make perf-check  # Provisional HTTP budget + evidence; human acceptance separately
 # Record HTTP API latency where applicable (proxy only, not visible UI performance)
 make perf
 # For UI use cases, separately measure user-visible feedback and task completion
